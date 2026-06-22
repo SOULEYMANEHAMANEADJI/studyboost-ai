@@ -6,6 +6,7 @@ import os
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from services.ai import AVAILABLE_MODELS
 from services.database import (
     get_db,
     get_settings,
@@ -62,7 +63,7 @@ def main():
 
     st.markdown("<h1 class='gradient-title'>⚙️ Admin Dashboard</h1>", unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Vue globale", "🎯 Activité", "💬 Feedbacks", "⚙️ Paramètres"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Vue globale", "🎯 Activité", "💬 Feedbacks", "⚙️ Paramètres", "🤖 Modèles"])
 
     # --- TAB 1 ---
     with tab1:
@@ -186,6 +187,42 @@ def main():
                 r = cleanup_old_data(db)
                 st.success(f"{r['chat_deleted']} messages, {r['sessions_deleted']} sessions supprimées.")
                 log_activity(db, session_id, "admin_cleanup", f"chat={r['chat_deleted']}, sessions={r['sessions_deleted']}")
+
+    # --- TAB 5 : Per-model management ---
+    with tab5:
+        st.markdown("### 🤖 Gestion des modèles")
+        st.markdown("Active / désactive chaque modèle et fixe son quota journalier.")
+        st.markdown("---")
+
+        model_keys = list(AVAILABLE_MODELS.keys())
+        for i in range(0, len(model_keys), 2):
+            cols = st.columns(2)
+            for j in range(2):
+                idx = i + j
+                if idx >= len(model_keys):
+                    break
+                label = model_keys[idx]
+                mid = AVAILABLE_MODELS[label]
+                enabled_key = f"model_enabled_{mid}"
+                quota_key = f"model_quota_{mid}"
+
+                with cols[j]:
+                    st.markdown(f"**{label}**")
+                    st.caption(f"`{mid}`")
+                    cur_enabled = settings.get(enabled_key, "true").lower() == "true"
+                    new_enabled = st.toggle("Activé", value=cur_enabled, key=f"me_{mid}")
+                    if new_enabled != cur_enabled:
+                        update_setting(db, enabled_key, new_enabled)
+                        st.success(f"{'Activé' if new_enabled else 'Désactivé'}")
+
+                    cur_quota = int(settings.get(quota_key, "20"))
+                    new_quota = st.number_input(
+                        "Quota/jour", 1, 200, cur_quota, key=f"mq_{mid}"
+                    )
+                    if new_quota != cur_quota:
+                        update_setting(db, quota_key, new_quota)
+                        st.success(f"Quota mis à jour : {new_quota}/jour")
+                    st.markdown("---")
 
 
 if __name__ == "__main__":

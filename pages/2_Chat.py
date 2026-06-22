@@ -13,7 +13,7 @@ from services.database import (
     use_quota,
 )
 from services.search import search_web, format_results
-from services.session_manager import get_session_id, init_session, get_quota
+from services.session_manager import get_session_id, init_session, get_quota, get_model_quota, consume_model_quota
 from services.ui_helpers import inject_css, show_quota_sidebar, show_feature_disabled
 
 st.set_page_config(page_title="Chat - StudyBoost AI", page_icon="💬", layout="wide")
@@ -79,6 +79,13 @@ def main():
             key="chat_model",
         )
         selected_model = AVAILABLE_MODELS[model_choice]
+
+        model_enabled_chat = settings.get(f"model_enabled_{selected_model}", "true").lower() == "true"
+        if not model_enabled_chat:
+            st.warning("🔇 Modèle désactivé par l'administrateur.")
+        else:
+            mq = get_model_quota(db, session_id, selected_model, settings)
+            st.caption(f"📊 {mq['remaining']}/{mq['limit']} utilisations aujourd'hui")
         st.markdown("---")
 
         show_quota_sidebar(quotas)
@@ -129,6 +136,11 @@ def main():
         wants_search = web_search or any(kw in prompt.lower() for kw in SEARCH_KEYWORDS)
         used_search_quota = False
 
+        model_enabled_chat = settings.get(f"model_enabled_{selected_model}", "true").lower() == "true"
+        if not model_enabled_chat:
+            st.error(f"🔇 Le modèle **{model_choice}** est désactivé par l'administrateur.")
+            st.stop()
+
         with st.chat_message("assistant"):
             with st.spinner("🤔 Réflexion en cours…"):
                 try:
@@ -149,6 +161,7 @@ def main():
 
                     st.markdown(response)
                     use_quota(db, session_id, "chat")
+                    consume_model_quota(db, session_id, selected_model)
                     st.session_state["messages"].append({"role": "assistant", "content": response})
                     save_chat_message(db, session_id, "assistant", response)
                     log_activity(

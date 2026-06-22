@@ -27,6 +27,22 @@ DEFAULT_SETTINGS = {
     "global_message": "",
 }
 
+# Per-model flags and quotas — populated lazily in get_settings()
+_MODEL_SETTINGS_KEYS: list[str] | None = None
+
+
+def _get_model_setting_keys() -> list[str]:
+    global _MODEL_SETTINGS_KEYS
+    if _MODEL_SETTINGS_KEYS is None:
+        from services.ai import AVAILABLE_MODELS
+
+        keys = []
+        for mid in AVAILABLE_MODELS.values():
+            keys.append(f"model_enabled_{mid}")
+            keys.append(f"model_quota_{mid}")
+        _MODEL_SETTINGS_KEYS = keys
+    return _MODEL_SETTINGS_KEYS
+
 
 def _get_secrets() -> dict[str, str]:
     """Retrieve Supabase credentials from environment or Streamlit secrets."""
@@ -62,8 +78,11 @@ def get_settings(_db: Client | None = None) -> dict[str, str]:
     except Exception:
         settings = {}
 
-    # Ensure defaults exist remotely and locally.
-    for key, value in DEFAULT_SETTINGS.items():
+    all_defaults = dict(DEFAULT_SETTINGS)
+    for mk in _get_model_setting_keys():
+        all_defaults.setdefault(mk, "true" if mk.startswith("model_enabled_") else "20")
+
+    for key, value in all_defaults.items():
         if key not in settings:
             settings[key] = value
             try:
@@ -277,6 +296,45 @@ def use_quota(db: Client, session_id: str, quota_type: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def use_model_usage(db: Client, session_id: str, model_id: str) -> bool:
+    """Increment per-model usage counter (JSONB column). Graceful if column missing."""
+    try:
+        resp = (
+            db.table("anonymous_sessions")
+            .select("model_usage")
+            .eq("id", session_id)
+            .execute()
+        )
+        rows = resp.data or []
+        current: dict = {}
+        if rows and rows[0].get("model_usage"):
+            current = rows[0]["model_usage"]
+        current[model_id] = current.get(model_id, 0) + 1
+        db.table("anonymous_sessions").update({"model_usage": current}).eq(
+            "id", session_id
+        ).execute()
+        return True
+    except Exception:
+        return False
+
+
+def get_model_usage(db: Client, session_id: str, model_id: str) -> int:
+    """Return usage count for a specific model. 0 if column missing."""
+    try:
+        resp = (
+            db.table("anonymous_sessions")
+            .select("model_usage")
+            .eq("id", session_id)
+            .execute()
+        )
+        rows = resp.data or []
+        if rows and rows[0].get("model_usage"):
+            return int(rows[0]["model_usage"].get(model_id, 0))
+    except Exception:
+        pass
+    return 0
 
 
 def cleanup_old_data(db: Client) -> dict[str, int]:

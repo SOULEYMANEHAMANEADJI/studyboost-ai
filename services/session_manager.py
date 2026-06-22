@@ -8,7 +8,7 @@ from typing import Any
 import streamlit as st
 from supabase import Client
 
-from services.database import get_or_create_session, use_quota
+from services.database import get_or_create_session, use_quota, get_model_usage, use_model_usage
 
 
 def get_session_id() -> str:
@@ -72,6 +72,20 @@ def consume_quota(
     if use_quota(db, session_id, quota_type):
         return True, ""
     return False, "Impossible de mettre à jour le quota. Réessaie plus tard."
+
+
+def get_model_quota(
+    db: Client, session_id: str, model_id: str, settings: dict[str, str]
+) -> dict[str, int]:
+    """Return used/limit/remaining for a specific AI model."""
+    limit = int(settings.get(f"model_quota_{model_id}", "20"))
+    used = get_model_usage(db, session_id, model_id)
+    return {"used": used, "limit": limit, "remaining": max(0, limit - used)}
+
+
+def consume_model_quota(db: Client, session_id: str, model_id: str) -> bool:
+    """Increment per-model usage counter. Returns success."""
+    return use_model_usage(db, session_id, model_id)
 
 
 def update_session_activity(db: Client, session_id: str) -> None:

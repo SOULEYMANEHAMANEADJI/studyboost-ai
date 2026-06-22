@@ -1,4 +1,4 @@
-"""Groq-based AI helpers for StudyBoost AI — multi-modèles."""
+"""Multi-provider AI helpers for StudyBoost AI — Groq + Google Gemini."""
 from __future__ import annotations
 
 import os
@@ -6,7 +6,6 @@ from typing import Literal
 
 from dotenv import load_dotenv
 import streamlit as st
-from groq import Groq
 
 load_dotenv()
 
@@ -16,7 +15,14 @@ AVAILABLE_MODELS = {
     "💎 Gemma 2 9B (Google)": "gemma2-9b-it",
     "🔬 Mixtral 8x7B (Expert)": "mixtral-8x7b-32768",
     "🚀 Llama 3.2 11B (Équilibré)": "llama-3.2-11b-text-preview",
+    "🏃 Llama 3.2 3B (Léger)": "llama-3.2-3b-text-preview",
+    "🧮 DeepSeek R1 70B (Raisonnement)": "deepseek-r1-distill-llama-70b",
+    "🌐 Qwen 2.5 32B (Général)": "qwen-2.5-32b",
+    "🌟 Gemini 1.5 Flash (Google)": "gemini-1.5-flash",
 }
+
+MODEL_PROVIDERS: dict[str, str] = {mid: "groq" for mid in AVAILABLE_MODELS.values()}
+MODEL_PROVIDERS["gemini-1.5-flash"] = "google"
 
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 
@@ -48,16 +54,20 @@ STYLE_PROMPTS = {
 }
 
 
-def _get_client() -> Groq:
+# ---------------------------------------------------------------------------
+#  Groq
+# ---------------------------------------------------------------------------
+
+def _get_groq_key() -> str:
     try:
-        api_key = st.secrets.get("GROQ_API_KEY")
+        key = st.secrets.get("GROQ_API_KEY")
     except Exception:
-        api_key = None
-    if not api_key:
-        api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
+        key = None
+    if not key:
+        key = os.environ.get("GROQ_API_KEY")
+    if not key:
         raise RuntimeError("GROQ_API_KEY manquant.")
-    return Groq(api_key=api_key)
+    return key
 
 
 def _call_groq(
@@ -66,7 +76,9 @@ def _call_groq(
     temperature: float = 0.3,
     max_tokens: int = 3000,
 ) -> str:
-    client = _get_client()
+    from groq import Groq
+
+    client = Groq(api_key=_get_groq_key())
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -75,6 +87,81 @@ def _call_groq(
     )
     return response.choices[0].message.content.strip()
 
+
+# ---------------------------------------------------------------------------
+#  Google Gemini
+# ---------------------------------------------------------------------------
+
+def _get_google_key() -> str:
+    try:
+        key = st.secrets.get("GOOGLE_API_KEY")
+    except Exception:
+        key = None
+    if not key:
+        key = os.environ.get("GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError("GOOGLE_API_KEY manquant.")
+    return key
+
+
+def _call_gemini(
+    messages: list[dict[str, str]],
+    model: str = "gemini-1.5-flash",
+    temperature: float = 0.3,
+    max_tokens: int = 3000,
+) -> str:
+    import google.generativeai as genai
+
+    genai.configure(api_key=_get_google_key())
+
+    system_prompt = ""
+    contents: list[dict] = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role == "system":
+            system_prompt += content + "\n"
+        elif role == "user":
+            contents.append({"role": "user", "parts": [content]})
+        elif role == "assistant":
+            contents.append({"role": "model", "parts": [content]})
+
+    if not contents:
+        contents = [{"role": "user", "parts": ["Bonjour"]}]
+
+    gen_model = genai.GenerativeModel(
+        model,
+        system_instruction=system_prompt.strip() or None,
+    )
+    response = gen_model.generate_content(
+        contents,
+        generation_config=genai.types.GenerationConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        ),
+    )
+    return response.text.strip()
+
+
+# ---------------------------------------------------------------------------
+#  Router
+# ---------------------------------------------------------------------------
+
+def _call_ai(
+    messages: list[dict[str, str]],
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.3,
+    max_tokens: int = 3000,
+) -> str:
+    provider = MODEL_PROVIDERS.get(model, "groq")
+    if provider == "google":
+        return _call_gemini(messages, model, temperature, max_tokens)
+    return _call_groq(messages, model, temperature, max_tokens)
+
+
+# ---------------------------------------------------------------------------
+#  Public helpers
+# ---------------------------------------------------------------------------
 
 def format_text(
     text: str,
@@ -86,7 +173,7 @@ def format_text(
         "avec un format Markdown propre et structuré."
     )
     prompt = f"{STYLE_PROMPTS[style]}\n\n---\n\n{text}"
-    return _call_groq(
+    return _call_ai(
         [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -108,7 +195,7 @@ def chat_response(
         "le cours fourni par l'utilisateur. Si le contexte est insuffisant, "
         "dis-le clairement et demande des précisions."
     )
-    messages = [
+    messages: list[dict[str, str]] = [
         {"role": "system", "content": system},
     ]
     if context.strip():
@@ -127,7 +214,7 @@ def chat_response(
             "content": msg.get("content", ""),
         })
     messages.append({"role": "user", "content": question})
-    return _call_groq(messages, model=model, temperature=0.4)
+    return _call_ai(messages, model=model, temperature=0.4)
 
 
 def chat_with_search(
@@ -148,7 +235,7 @@ def chat_with_search(
     )
     if context.strip():
         content += f"Contexte du cours de l'utilisateur :\n{context[:4000]}"
-    return _call_groq(
+    return _call_ai(
         [
             {"role": "system", "content": system},
             {"role": "user", "content": content},

@@ -6,7 +6,7 @@ from datetime import datetime
 import streamlit as st
 from services.ai import AVAILABLE_MODELS, format_text, DEFAULT_MODEL
 from services.database import get_db, get_settings, log_activity, use_quota
-from services.session_manager import get_session_id, init_session, get_quota
+from services.session_manager import get_session_id, init_session, get_quota, get_model_quota, consume_model_quota
 from services.pdf_generator import markdown_to_pdf, generate_default_title
 from services.ui_helpers import inject_css, show_quota_sidebar, show_feature_disabled, quota_warning
 
@@ -52,6 +52,13 @@ def main():
         )
         selected_model = AVAILABLE_MODELS[model_choice]
         st.session_state["editor_model"] = selected_model
+
+        model_enabled = settings.get(f"model_enabled_{selected_model}", "true").lower() == "true"
+        if not model_enabled:
+            st.warning("🔇 Modèle désactivé par l'administrateur.")
+        else:
+            mq = get_model_quota(db, session_id, selected_model, settings)
+            st.caption(f"📊 {mq['remaining']}/{mq['limit']} utilisations aujourd'hui")
         st.markdown("---")
 
         show_quota_sidebar(quotas)
@@ -93,14 +100,20 @@ def main():
                 if st.button(label, use_container_width=True, key=f"btn_{style}"):
                     selected_style = style
 
+        model_enabled = settings.get(f"model_enabled_{selected_model}", "true").lower() == "true"
+
         if selected_style and source_text:
-            with st.spinner("🤖 L'IA transforme ton texte…"):
-                try:
-                    result = format_text(source_text, selected_style, model=selected_model)
-                    st.session_state["result_text"] = result
-                    log_activity(db, session_id, "editor_transform", f"style={selected_style}")
-                except Exception as e:
-                    st.error(f"Erreur IA : {e}")
+            if not model_enabled:
+                st.error(f"🔇 Le modèle **{model_choice}** est désactivé par l'administrateur.")
+            else:
+                with st.spinner("🤖 L'IA transforme ton texte…"):
+                    try:
+                        result = format_text(source_text, selected_style, model=selected_model)
+                        st.session_state["result_text"] = result
+                        consume_model_quota(db, session_id, selected_model)
+                        log_activity(db, session_id, "editor_transform", f"style={selected_style}")
+                    except Exception as e:
+                        st.error(f"Erreur IA : {e}")
         elif selected_style and not source_text:
             st.warning("Colle d'abord ton texte dans la zone ci-dessus.")
     else:
