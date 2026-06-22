@@ -1,11 +1,8 @@
-"""Supabase database interactions for StudyBoost AI."""
+"""Supabase database layer with caching for StudyBoost AI."""
 from __future__ import annotations
 
 import os
-import time
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
-from typing import Any
 
 from dotenv import load_dotenv
 import streamlit as st
@@ -13,6 +10,28 @@ from supabase import Client, create_client
 
 load_dotenv()
 
+
+def _get_creds() -> dict:
+    try:
+        return {"url": st.secrets["SUPABASE_URL"], "key": st.secrets["SUPABASE_ANON_KEY"]}
+    except Exception:
+        return {
+            "url": os.environ.get("SUPABASE_URL", ""),
+            "key": os.environ.get("SUPABASE_ANON_KEY", ""),
+        }
+
+
+@st.cache_resource
+def get_db() -> Client:
+    creds = _get_creds()
+    if not creds["url"] or not creds["key"]:
+        raise RuntimeError("Supabase credentials are missing.")
+    return create_client(creds["url"], creds["key"])
+
+
+# ---------------------------------------------------------------------------
+# Settings (cache 60s)
+# ---------------------------------------------------------------------------
 
 DEFAULT_SETTINGS = {
     "feature_chat_enabled": "true",
@@ -22,361 +41,248 @@ DEFAULT_SETTINGS = {
     "auto_cleanup_enabled": "true",
     "maintenance_mode": "false",
     "quota_pdf_per_day": "10",
-    "quota_chat_per_day": "15",
-    "quota_search_per_day": "15",
+    "quota_chat_per_day": "20",
+    "quota_search_per_day": "10",
+    "quota_ai_per_day": "15",
     "global_message": "",
 }
 
-# Per-model flags and quotas — populated lazily in get_settings()
-_MODEL_SETTINGS_KEYS: list[str] | None = None
 
-
-def _get_model_setting_keys() -> list[str]:
-    global _MODEL_SETTINGS_KEYS
-    if _MODEL_SETTINGS_KEYS is None:
-        from services.ai import AVAILABLE_MODELS
-
-        keys = []
-        for mid in AVAILABLE_MODELS.values():
-            keys.append(f"model_enabled_{mid}")
-            keys.append(f"model_quota_{mid}")
-        _MODEL_SETTINGS_KEYS = keys
-    return _MODEL_SETTINGS_KEYS
-
-
-def _get_secrets() -> dict[str, str]:
-    """Retrieve Supabase credentials from environment or Streamlit secrets."""
+@st.cache_data(ttl=60)
+def get_settings() -> dict:
+    db = get_db()
     try:
-        return {
-            "url": st.secrets["SUPABASE_URL"],
-            "key": st.secrets["SUPABASE_ANON_KEY"],
-        }
-    except Exception:
-        return {
-            "url": os.environ.get("SUPABASE_URL", ""),
-            "key": os.environ.get("SUPABASE_ANON_KEY", ""),
-        }
-
-
-@st.cache_resource(show_spinner=False)
-def get_db() -> Client:
-    """Return a cached Supabase client."""
-    creds = _get_secrets()
-    if not creds["url"] or not creds["key"]:
-        raise RuntimeError("Supabase credentials are missing.")
-    return create_client(creds["url"], creds["key"])
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def get_settings(_db: Client | None = None) -> dict[str, str]:
-    """Load admin settings from Supabase with a 60s cache."""
-    db = _db or get_db()
-    try:
-        response = db.table("admin_settings").select("key, value").execute()
-        rows = response.data or []
+        result = db.table("admin_settings").select("key, value").execute()
+        rows = result.data or []
         settings = {row["key"]: row["value"] for row in rows}
     except Exception:
         settings = {}
 
-    all_defaults = dict(DEFAULT_SETTINGS)
-    for mk in _get_model_setting_keys():
-        all_defaults.setdefault(mk, "true" if mk.startswith("model_enabled_") else "20")
-
-    for key, value in all_defaults.items():
+    for key, val in DEFAULT_SETTINGS.items():
         if key not in settings:
-            settings[key] = value
+            settings[key] = val
             try:
-                db.table("admin_settings").insert(
-                    {"key": key, "value": value}
-                ).execute()
+                db.table("admin_settings").insert({"key": key, "value": val}).execute()
             except Exception:
                 pass
     return settings
 
 
-def update_setting(db: Client, key: str, value: str | int | bool) -> bool:
-    """Update a single admin setting and invalidate the cache."""
-    value_str = str(value).lower() if isinstance(value, bool) else str(value)
+def update_setting(key: str, value: str | int | bool) -> bool:
+    db = get_db()
+    s = str(value).lower() if isinstance(value, bool) else str(value)
     try:
-        response = (
-            db.table("admin_settings")
-            .select("key")
-            .eq("key", key)
-            .execute()
-        )
-        if response.data:
-            db.table("admin_settings").update({"value": value_str}).eq(
-                "key", key
-            ).execute()
+        existing = db.table("admin_settings").select("key").eq("key", key).execute()
+        if existing.data:
+            db.table("admin_settings").update({"value": s}).eq("key", key).execute()
         else:
-            db.table("admin_settings").insert(
-                {"key": key, "value": value_str}
-            ).execute()
+            db.table("admin_settings").insert({"key": key, "value": s}).execute()
         get_settings.clear()
         return True
     except Exception as e:
-        st.error(f"Erreur lors de la mise à jour du paramètre : {e}")
+        st.error(f"Erreur de mise à jour: {e}")
         return False
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+# ---------------------------------------------------------------------------
+# Quotas (cache 30s)
+# ---------------------------------------------------------------------------
 
-
-def log_activity(
-    db: Client, session_id: str, action_type: str, action_detail: str = ""
-) -> bool:
-    """Insert an entry into activity_logs."""
+def _table() -> str:
+    """Return sessions table name if it exists, else anonymous_sessions."""
+    db = get_db()
     try:
-        db.table("activity_logs").insert({
-            "session_id": session_id,
-            "action_type": action_type,
-            "action_detail": action_detail[:500],
-            "created_at": _now().isoformat(),
-        }).execute()
-        return True
+        db.table("sessions").select("id").limit(1).execute()
+        return "sessions"
     except Exception:
-        return False
+        return "anonymous_sessions"
 
 
-def save_feedback(
-    db: Client,
-    session_id: str,
-    rating: int,
-    comment: str,
-    feature_request: str,
-    other_idea: str,
-    email: str,
-) -> bool:
-    """Save a user feedback into Supabase."""
+@st.cache_data(ttl=30)
+def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
+    db = get_db()
+    settings = get_settings()
+    tbl = _table()
+
+    if admin_bypass:
+        return {
+            "pdf": {"used": 0, "limit": 9999},
+            "chat": {"used": 0, "limit": 9999},
+            "search": {"used": 0, "limit": 9999},
+            "ai": {"used": 0, "limit": 9999},
+        }
+
     try:
-        db.table("feedbacks").insert({
-            "session_id": session_id,
-            "rating": rating,
-            "comment": comment[:2000],
-            "feature_request": feature_request,
-            "other_idea": other_idea[:500],
-            "email": email[:255] if email else None,
-            "created_at": _now().isoformat(),
-        }).execute()
-        log_activity(db, session_id, "feedback", f"rating={rating}")
-        return True
-    except Exception as e:
-        st.error(f"Erreur lors de l'envoi du feedback : {e}")
-        return False
-
-
-def save_chat_message(db: Client, session_id: str, role: str, content: str) -> bool:
-    """Persist a chat message; content is truncated to 5000 chars."""
-    try:
-        db.table("chat_history").insert({
-            "session_id": session_id,
-            "role": role,
-            "content": content[:5000],
-            "created_at": _now().isoformat(),
-        }).execute()
-        return True
-    except Exception:
-        return False
-
-
-def get_chat_history(db: Client, session_id: str) -> list[dict[str, Any]]:
-    """Return ordered chat history for a session."""
-    try:
-        response = (
-            db.table("chat_history")
-            .select("role, content, created_at")
-            .eq("session_id", session_id)
-            .order("created_at", desc=False)
+        result = (
+            db.table(tbl)
+            .select("pdf_count, chat_count, search_count, ai_count")
+            .eq("id", user_id)
             .execute()
         )
-        return response.data or []
+    except Exception:
+        return None
+
+    if not result.data:
+        return None
+
+    usage = result.data[0]
+    return {
+        "pdf": {
+            "used": usage.get("pdf_count", 0) or 0,
+            "limit": int(settings.get("quota_pdf_per_day", 10)),
+        },
+        "chat": {
+            "used": usage.get("chat_count", 0) or 0,
+            "limit": int(settings.get("quota_chat_per_day", 20)),
+        },
+        "search": {
+            "used": usage.get("search_count", 0) or 0,
+            "limit": int(settings.get("quota_search_per_day", 10)),
+        },
+        "ai": {
+            "used": usage.get("ai_count", 0) or 0,
+            "limit": int(settings.get("quota_ai_per_day", 15)),
+        },
+    }
+
+
+def _quota_remaining(q: dict) -> int:
+    return max(0, q["limit"] - q["used"])
+
+
+def increment_quota(user_id: str, quota_type: str):
+    db = get_db()
+    tbl = _table()
+    col = f"{quota_type}_count"
+
+    try:
+        current = db.table(tbl).select(col).eq("id", user_id).execute()
+        if current.data:
+            val = (current.data[0].get(col, 0) or 0) + 1
+            db.table(tbl).update({
+                col: val,
+                "last_active": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", user_id).execute()
+    except Exception:
+        pass
+
+    get_user_quotas.clear()
+
+
+# ---------------------------------------------------------------------------
+# Activity logging
+# ---------------------------------------------------------------------------
+
+def log_activity(user_id: str, action_type: str, detail: str = ""):
+    db = get_db()
+    try:
+        db.table("activity_logs").insert({
+            "session_id": user_id,
+            "action_type": action_type,
+            "action_detail": detail[:500],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Chat history
+# ---------------------------------------------------------------------------
+
+def save_chat_message(user_id: str, role: str, content: str):
+    db = get_db()
+    try:
+        db.table("chat_history").insert({
+            "session_id": user_id,
+            "role": role,
+            "content": content[:5000],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception:
+        pass
+
+
+@st.cache_data(ttl=10)
+def get_chat_history(user_id: str) -> list:
+    db = get_db()
+    try:
+        result = (
+            db.table("chat_history")
+            .select("role, content")
+            .eq("session_id", user_id)
+            .order("created_at")
+            .execute()
+        )
+        return result.data or []
     except Exception:
         return []
 
 
-def clear_chat_history(db: Client, session_id: str) -> bool:
-    """Remove all chat messages for a session."""
+def clear_chat_history(user_id: str):
+    db = get_db()
     try:
-        db.table("chat_history").delete().eq("session_id", session_id).execute()
-        return True
-    except Exception:
-        return False
-
-
-def get_or_create_session(db: Client, session_id: str) -> dict[str, Any]:
-    """Fetch an anonymous session or create a new one with today's quota reset."""
-    now = _now()
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    try:
-        response = (
-            db.table("anonymous_sessions")
-            .select("*")
-            .eq("id", session_id)
-            .execute()
-        )
-        rows = response.data or []
-        if rows:
-            session = rows[0]
-            last_active = _parse_iso(session.get("last_active_at")) or now
-            quota_reset = _parse_iso(session.get("quota_reset_at")) or today
-
-            # Reset daily quotas if we crossed midnight since last reset.
-            if today > quota_reset:
-                session["pdf_used"] = 0
-                session["chat_used"] = 0
-                session["search_used"] = 0
-                session["quota_reset_at"] = today.isoformat()
-
-            db.table("anonymous_sessions").update({
-                "last_active_at": now.isoformat(),
-                "quota_reset_at": session["quota_reset_at"],
-                "pdf_used": session["pdf_used"],
-                "chat_used": session["chat_used"],
-                "search_used": session["search_used"],
-            }).eq("id", session_id).execute()
-            return session
+        db.table("chat_history").delete().eq("session_id", user_id).execute()
     except Exception:
         pass
+    get_chat_history.clear()
 
+
+# ---------------------------------------------------------------------------
+# Feedback
+# ---------------------------------------------------------------------------
+
+def save_feedback(user_id: str, rating: int, comment: str, feature_request: str, other_idea: str, email: str) -> bool:
+    db = get_db()
     try:
-        db.table("anonymous_sessions").insert({
-            "id": session_id,
-            "created_at": now.isoformat(),
-            "last_active_at": now.isoformat(),
-            "quota_reset_at": today.isoformat(),
-            "pdf_used": 0,
-            "chat_used": 0,
-            "search_used": 0,
+        db.table("feedbacks").insert({
+            "session_id": user_id,
+            "rating": rating,
+            "comment": comment[:2000],
+            "feature_request": feature_request[:500],
+            "other_idea": other_idea[:500],
+            "email": email[:255] if email else None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
-    except Exception:
-        pass
-
-    return {
-        "id": session_id,
-        "pdf_used": 0,
-        "chat_used": 0,
-        "search_used": 0,
-        "quota_reset_at": today.isoformat(),
-    }
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except Exception:
-        return None
-
-
-def use_quota(db: Client, session_id: str, quota_type: str) -> bool:
-    """Increment a quota counter if possible; return success."""
-    if quota_type not in ("pdf", "chat", "search"):
-        return False
-    column = f"{quota_type}_used"
-    try:
-        response = (
-            db.table("anonymous_sessions")
-            .select(column)
-            .eq("id", session_id)
-            .execute()
-        )
-        rows = response.data or []
-        if not rows:
-            return False
-        current = int(rows[0].get(column, 0) or 0)
-        db.table("anonymous_sessions").update({column: current + 1}).eq(
-            "id", session_id
-        ).execute()
+        log_activity(user_id, "feedback", f"rating={rating}")
         return True
-    except Exception:
+    except Exception as e:
+        st.error(f"Erreur feedback: {e}")
         return False
 
 
-def use_model_usage(db: Client, session_id: str, model_id: str) -> bool:
-    """Increment per-model usage counter (JSONB column). Graceful if column missing."""
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+def cleanup_old_data():
+    settings = get_settings()
+    if settings.get("auto_cleanup_enabled", "true") != "true":
+        return
+
+    db = get_db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
     try:
-        resp = (
-            db.table("anonymous_sessions")
-            .select("model_usage")
-            .eq("id", session_id)
-            .execute()
-        )
-        rows = resp.data or []
-        current: dict = {}
-        if rows and rows[0].get("model_usage"):
-            current = rows[0]["model_usage"]
-        current[model_id] = current.get(model_id, 0) + 1
-        db.table("anonymous_sessions").update({"model_usage": current}).eq(
-            "id", session_id
-        ).execute()
-        return True
-    except Exception:
-        return False
-
-
-def get_model_usage(db: Client, session_id: str, model_id: str) -> int:
-    """Return usage count for a specific model. 0 if column missing."""
-    try:
-        resp = (
-            db.table("anonymous_sessions")
-            .select("model_usage")
-            .eq("id", session_id)
-            .execute()
-        )
-        rows = resp.data or []
-        if rows and rows[0].get("model_usage"):
-            return int(rows[0]["model_usage"].get(model_id, 0))
-    except Exception:
-        pass
-    return 0
-
-
-def cleanup_old_data(db: Client) -> dict[str, int]:
-    """Delete chat_history > 7 days and inactive sessions > 7 days if enabled."""
-    settings = get_settings(db)
-    if settings.get("auto_cleanup_enabled", "true").lower() != "true":
-        return {"chat_deleted": 0, "sessions_deleted": 0}
-
-    cutoff = _now() - timedelta(days=7)
-    stats = {"chat_deleted": 0, "sessions_deleted": 0}
-    try:
-        chat_resp = (
-            db.table("chat_history")
-            .delete()
-            .lt("created_at", cutoff.isoformat())
-            .execute()
-        )
-        stats["chat_deleted"] = len(chat_resp.data or [])
+        db.table("chat_history").delete().lt("created_at", cutoff).execute()
     except Exception:
         pass
 
     try:
-        sess_resp = (
-            db.table("anonymous_sessions")
-            .delete()
-            .lt("last_active_at", cutoff.isoformat())
-            .execute()
-        )
-        stats["sessions_deleted"] = len(sess_resp.data or [])
+        db.table("sessions").delete().lt("last_active", cutoff).execute()
     except Exception:
         pass
 
-    return stats
 
+# ---------------------------------------------------------------------------
+# Admin stats
+# ---------------------------------------------------------------------------
 
-def admin_get_stats(db: Client, days: int = 7) -> dict[str, Any]:
-    """Aggregate statistics for the admin dashboard."""
-    since = (_now() - timedelta(days=days)).isoformat()
+def admin_get_stats(days: int = 7) -> dict:
+    db = get_db()
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     stats = {
-        "days": days,
         "total_sessions": 0,
-        "total_actions": 0,
         "actions_period": 0,
         "feedbacks": 0,
         "average_rating": 0.0,
@@ -392,92 +298,71 @@ def admin_get_stats(db: Client, days: int = 7) -> dict[str, Any]:
     }
 
     try:
-        sess_resp = db.table("anonymous_sessions").select("id", count="exact").execute()
-        stats["total_sessions"] = sess_resp.count or 0
+        r = db.table("sessions").select("id", count="exact").execute()
+        stats["total_sessions"] = r.count or 0
     except Exception:
         pass
 
     try:
-        action_all = db.table("activity_logs").select("id", count="exact").execute()
-        stats["total_actions"] = action_all.count or 0
-    except Exception:
-        pass
-
-    try:
-        action_resp = (
+        r = (
             db.table("activity_logs")
             .select("action_type,action_detail,created_at,session_id")
             .gte("created_at", since)
             .order("created_at", desc=True)
             .execute()
         )
-        actions = action_resp.data or []
+        actions = r.data or []
         stats["actions_period"] = len(actions)
         stats["recent_actions"] = actions[:30]
     except Exception:
         actions = []
 
-    for action in actions:
-        day = action["created_at"][:10] if action.get("created_at") else ""
+    for a in actions:
+        day = (a.get("created_at") or "")[:10]
         if day:
             stats["actions_by_day"][day] = stats["actions_by_day"].get(day, 0) + 1
-            stats["active_users_by_day"].setdefault(day, set()).add(
-                action.get("session_id", "")
-            )
-            action_type = action.get("action_type", "unknown")
-            stats["actions_by_type"][action_type] = (
-                stats["actions_by_type"].get(action_type, 0) + 1
-            )
+            stats["active_users_by_day"].setdefault(day, set()).add(a.get("session_id", ""))
+            t = a.get("action_type", "unknown")
+            stats["actions_by_type"][t] = stats["actions_by_type"].get(t, 0) + 1
 
-    for day, users in stats["active_users_by_day"].items():
-        stats["active_users_by_day"][day] = len(users)
+    for d, u in stats["active_users_by_day"].items():
+        stats["active_users_by_day"][d] = len(u)
 
     try:
-        feedback_resp = db.table("feedbacks").select("*").execute()
-        feedbacks = feedback_resp.data or []
-        stats["feedbacks"] = len(feedbacks)
-        stats["feedbacks_list"] = feedbacks
-        ratings = [f["rating"] for f in feedbacks if f.get("rating")]
+        r = db.table("feedbacks").select("*").execute()
+        fbs = r.data or []
+        stats["feedbacks"] = len(fbs)
+        stats["feedbacks_list"] = fbs
+        ratings = [f["rating"] for f in fbs if f.get("rating")]
         if ratings:
             stats["average_rating"] = round(sum(ratings) / len(ratings), 2)
-        for r in ratings:
-            if 1 <= r <= 5:
-                stats["rating_distribution"][r] += 1
+        for rv in ratings:
+            if 1 <= rv <= 5:
+                stats["rating_distribution"][rv] += 1
         stats["emails_collected"] = [
             {"email": f.get("email"), "created_at": f.get("created_at"), "rating": f.get("rating")}
-            for f in feedbacks
-            if f.get("email")
+            for f in fbs if f.get("email")
         ]
-        for f in feedbacks:
-            req = f.get("feature_request") or ""
-            for feature in req.split(","):
-                feature = feature.strip()
-                if feature:
-                    stats["feature_requests"][feature] = (
-                        stats["feature_requests"].get(feature, 0) + 1
-                    )
-    except Exception:
-        pass
-
-    try:
-        oldest_chat = (
-            db.table("chat_history")
-            .select("created_at")
-            .order("created_at", desc=False)
-            .limit(1)
-            .execute()
-        )
-        oldest_session = (
-            db.table("anonymous_sessions")
-            .select("created_at")
-            .order("created_at", desc=False)
-            .limit(1)
-            .execute()
-        )
-        dates = [row.get("created_at") for row in (oldest_chat.data or []) + (oldest_session.data or []) if row.get("created_at")]
-        if dates:
-            stats["oldest_data"] = min(dates)[:10]
+        for f in fbs:
+            req = (f.get("feature_request") or "").strip()
+            for feat in req.split(","):
+                feat = feat.strip()
+                if feat:
+                    stats["feature_requests"][feat] = stats["feature_requests"].get(feat, 0) + 1
     except Exception:
         pass
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Backward-compatible aliases (for pages not yet migrated)
+# ---------------------------------------------------------------------------
+
+def get_settings_compat(db=None) -> dict:
+    return get_settings()
+
+
+def use_quota_compat(db, session_id, quota_type):
+    increment_quota(session_id, quota_type)
+    return True

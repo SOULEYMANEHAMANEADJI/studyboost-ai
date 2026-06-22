@@ -12,8 +12,8 @@ load_dotenv()
 AVAILABLE_MODELS = {
     "⚡ Llama 3.1 8B (Rapide - Recommandé)": "llama-3.1-8b-instant",
     "🧠 Llama 3.3 70B (Puissant)": "llama-3.3-70b-versatile",
-    "💎 Gemma 2 9B (Google)": "gemma2-9b-it",
-    "🔬 Mixtral 8x7B (Long texte)": "mixtral-8x7b-32768",
+    "🦙 Llama 4 Scout 17B (Polyvalent)": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "🔬 Qwen 3 32B (Long texte)": "qwen/qwen3-32b",
 }
 
 DEFAULT_MODEL = "llama-3.1-8b-instant"
@@ -28,22 +28,26 @@ STYLE_PROMPTS = {
 }
 
 
-def _get_client():
-    from groq import Groq
-
+def _get_key(name: str) -> str:
     try:
-        api_key = st.secrets.get("GROQ_API_KEY")
+        key = st.secrets.get(name)
     except Exception:
-        api_key = None
-    if not api_key:
-        api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY manquant.")
-    return Groq(api_key=api_key)
+        key = None
+    if not key:
+        key = os.environ.get(name)
+    if not key:
+        raise RuntimeError(f"{name} manquant.")
+    return key
+
+
+@st.cache_resource
+def get_groq_client():
+    from groq import Groq
+    return Groq(api_key=_get_key("GROQ_API_KEY"))
 
 
 def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000):
-    client = _get_client()
+    client = get_groq_client()
     response = client.chat.completions.create(
         model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
     )
