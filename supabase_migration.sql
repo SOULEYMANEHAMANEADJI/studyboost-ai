@@ -54,16 +54,24 @@ ALTER TABLE public.feedbacks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_settings ENABLE ROW LEVEL SECURITY;
 
 -- 8. Politiques RLS : autoriser l'accès anonyme (via anon key)
-CREATE POLICY IF NOT EXISTS "Allow anonymous access" ON public.sessions
-  FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Allow anonymous access" ON public.chat_history
-  FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Allow anonymous access" ON public.activity_logs
-  FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Allow anonymous access" ON public.feedbacks
-  FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY IF NOT EXISTS "Allow anonymous access" ON public.admin_settings
-  FOR ALL USING (true) WITH CHECK (true);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anonymous access' AND tablename = 'sessions') THEN
+    CREATE POLICY "Allow anonymous access" ON public.sessions FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anonymous access' AND tablename = 'chat_history') THEN
+    CREATE POLICY "Allow anonymous access" ON public.chat_history FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anonymous access' AND tablename = 'activity_logs') THEN
+    CREATE POLICY "Allow anonymous access" ON public.activity_logs FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anonymous access' AND tablename = 'feedbacks') THEN
+    CREATE POLICY "Allow anonymous access" ON public.feedbacks FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anonymous access' AND tablename = 'admin_settings') THEN
+    CREATE POLICY "Allow anonymous access" ON public.admin_settings FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 
 -- 9. Vérification : colonnes sessions
 SELECT column_name, data_type
