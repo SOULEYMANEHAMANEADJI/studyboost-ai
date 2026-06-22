@@ -142,6 +142,45 @@ header {{ visibility: hidden; }}
 </style>""", unsafe_allow_html=True)
 
 
+def show_quota_sidebar(quotas: dict):
+    st.markdown("### 📊 Quotas du jour")
+    for key, label, color in (
+        ("pdf", "Exports PDF", "#4F46E5"),
+        ("chat", "Messages", "#7C3AED"),
+        ("search", "Recherches web", "#EC4899"),
+    ):
+        info = quotas.get(key, {})
+        used = info.get("used", 0)
+        limit = info.get("limit", 10)
+        remaining = info.get("remaining", 0)
+        pct = int((used / limit) * 100) if limit else 0
+        st.markdown(f"""
+        <div class="quota-container" style="background:#F8FAFC;border-radius:12px;padding:1rem;margin:0.5rem 0;border:1px solid #E2E8F0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:0.8rem;color:#64748B;font-weight:600;">{label}</span>
+                <span style="font-size:0.75rem;color:#94A3B8;">{used}/{limit}</span>
+            </div>
+            <div style="height:6px;background:#E2E8F0;border-radius:3px;margin-top:4px;">
+                <div style="height:6px;width:{min(pct,100)}%;background:{color};border-radius:3px;"></div>
+            </div>
+            <div style="text-align:right;font-size:0.7rem;color:#94A3B8;margin-top:2px;">{remaining} restant(s)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def show_feature_disabled(feature_name: str):
+    st.info(f"⚙️ **{feature_name}** est temporairement indisponible. Reviens bientôt !")
+
+
+def quota_warning(remaining: int, limit: int, label: str) -> bool:
+    if remaining <= 0:
+        st.error(f"❌ Limite de **{label}** atteinte ({limit}/{limit}). Reviens demain !")
+        return False
+    if remaining <= 3:
+        st.warning(f"⚠️ Plus que **{remaining}** {label} aujourd'hui")
+    return True
+
+
 def apply_dark_mode() -> bool:
     if "dark_mode" not in st.session_state:
         st.session_state["dark_mode"] = False
