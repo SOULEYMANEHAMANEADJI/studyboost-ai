@@ -1,7 +1,8 @@
-"""StudyBoost AI - Chat page."""
+"""Chat IA — avec/sans contexte, recherche web, multi-modèles."""
 from __future__ import annotations
 
 import streamlit as st
+from services.ai import AVAILABLE_MODELS, chat_response, chat_with_search, DEFAULT_MODEL
 from services.database import (
     get_db,
     get_settings,
@@ -9,28 +10,24 @@ from services.database import (
     save_chat_message,
     get_chat_history,
     clear_chat_history,
+    use_quota,
 )
-from services.session_manager import get_session_id, init_session, get_quota, consume_quota
-from services.ai import chat_response, chat_with_search
 from services.search import search_web, format_results
-from services.ui import inject_css, render_quota_sidebar
-
+from services.session_manager import get_session_id, init_session, get_quota
+from services.ui_helpers import inject_css, show_quota_sidebar, show_feature_disabled
 
 st.set_page_config(page_title="Chat - StudyBoost AI", page_icon="💬", layout="wide")
 
-WEB_SEARCH_KEYWORDS = [
+SEARCH_KEYWORDS = [
     "cherche", "recherche", "internet", "web", "trouve",
-    "actualité", "récent", "news", "aujourd'hui",
+    "actualité", "récent", "news", "aujourd'hui", "dernières",
 ]
 
 
-def _should_search_web(question: str) -> bool:
-    q = question.lower()
-    return any(kw in q for kw in WEB_SEARCH_KEYWORDS)
-
-
 def main():
-    inject_css()
+    dark_mode = st.sidebar.toggle("🌙 Mode nuit", value=False, key="chat_dark")
+    inject_css(dark_mode)
+
     db = get_db()
     settings = get_settings(db)
     session_id = get_session_id()
@@ -40,150 +37,127 @@ def main():
     search_enabled = settings.get("feature_search_enabled", "true").lower() == "true"
 
     if not chat_enabled:
-        st.warning("💬 Le chat est actuellement désactivé par l'administrateur.")
+        st.warning("💬 Le chat est temporairement indisponible.")
         st.stop()
+
+    quotas = get_quota(db, session_id, settings)
 
     # Sidebar
     with st.sidebar:
-        st.markdown("## 💬 Chat avec ton cours")
-        st.sidebar.markdown("---")
-        course_context = st.sidebar.text_area(
-            "📖 Colle ton cours ici",
-            height=280,
-            placeholder="Colle ton cours, article ou notes...",
-            key="course_context",
+        st.markdown("## 💬 Chat IA")
+        st.markdown("---")
+
+        context_text = st.text_area(
+            "📋 Texte de référence (optionnel)",
+            height=200,
+            placeholder="Colle ton cours ici…\nSi vide, l'IA répond de manière générale.",
+            key="chat_context",
         )
-        if course_context:
-            wc = len(course_context.split())
-            st.sidebar.caption(f"📄 {wc} mots chargés")
+        if context_text.strip():
+            st.success(f"✅ {len(context_text.split())} mots chargés")
         else:
-            st.sidebar.caption("📄 Aucun cours chargé")
+            st.info("💡 Sans texte, l'IA répond comme assistant général")
 
-        st.sidebar.markdown("---")
-        quotas = get_quota(db, session_id, settings)
-        chat_remaining = quotas["chat"]["remaining"]
-        chat_limit = quotas["chat"]["limit"]
-        chat_used = quotas["chat"]["used"]
-        chat_pct = int((chat_used / chat_limit) * 100) if chat_limit else 0
-        st.sidebar.markdown("#### 💬 Chat")
-        st.sidebar.progress(min(chat_pct, 100), text=f"{chat_remaining} restant(s)")
+        st.markdown("---")
 
-        search_remaining = quotas["search"]["remaining"]
-        search_limit = quotas["search"]["limit"]
-        search_used = quotas["search"]["used"]
-        search_pct = int((search_used / search_limit) * 100) if search_limit else 0
-        st.sidebar.markdown("#### 🌐 Recherche web")
-        st.sidebar.progress(min(search_pct, 100), text=f"{search_remaining} restant(s)")
+        web_search = False
+        if search_enabled:
+            web_search = st.toggle(
+                "🌐 Activer la recherche web",
+                value=False,
+                help=f"Recherche en ligne. {quotas['search']['remaining']} restantes.",
+            )
+        else:
+            st.caption("🌐 Recherche web désactivée")
 
-        st.sidebar.markdown("---")
-
-        web_search_toggle = st.sidebar.checkbox(
-            "🌐 Recherche web",
-            value=False,
-            disabled=not search_enabled,
-            help="Active la recherche web pour les questions qui le nécessitent"
-            if search_enabled
-            else "Recherche web désactivée",
+        st.markdown("---")
+        st.markdown("### 🤖 Modèle IA")
+        model_choice = st.selectbox(
+            "Choisir le modèle",
+            options=list(AVAILABLE_MODELS.keys()),
+            index=0,
+            key="chat_model",
         )
+        selected_model = AVAILABLE_MODELS[model_choice]
+        st.markdown("---")
 
-        if st.sidebar.button("🗑️ Nouvelle conversation", use_container_width=True):
+        show_quota_sidebar(quotas)
+        st.markdown("---")
+
+        if st.button("🗑️ Nouvelle conversation", use_container_width=True):
             clear_chat_history(db, session_id)
-            st.session_state["chat_messages"] = []
+            st.session_state["messages"] = []
             st.rerun()
 
-        st.sidebar.markdown("---")
-        render_quota_sidebar(db, session_id, settings)
-
-    # Main chat area
-    st.markdown("<h1 class='gradient-title'>💬 Chat avec ton cours</h1>", unsafe_allow_html=True)
+    # Main chat
+    st.markdown("<h1 class='gradient-title'>💬 Chat IA</h1>", unsafe_allow_html=True)
     st.markdown(
-        "<p style='text-align:center;color:#64748B;'>Pose des questions sur ton cours, "
-        "et l'IA te répond en contexte.",
+        "<p class='subtitle'>Pose tes questions, l'IA te répond — avec ou sans cours.</p>",
         unsafe_allow_html=True,
     )
 
-    if chat_remaining <= 0:
-        st.warning(
-            "🚫 Tu as atteint ta limite de messages pour aujourd'hui. "
-            "Reviens demain pour continuer à apprendre !"
-        )
-        st.stop()
+    # Initialiser messages
+    if "messages" not in st.session_state:
+        history = get_chat_history(db, session_id)
+        st.session_state["messages"] = history if history else []
+        if not st.session_state["messages"]:
+            welcome = (
+                "Bonjour ! 👋 Je suis **StudyBoost AI**. "
+                "Colle ton cours dans la barre latérale ou pose-moi directement une question !"
+            )
+            st.session_state["messages"].append({"role": "assistant", "content": welcome})
+            save_chat_message(db, session_id, "assistant", welcome)
 
-    # Load chat history
-    if "chat_messages" not in st.session_state:
-        stored = get_chat_history(db, session_id)
-        st.session_state["chat_messages"] = stored or []
+    # Afficher messages
+    for msg in st.session_state["messages"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    # Display messages
-    for msg in st.session_state["chat_messages"]:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        with st.chat_message(role):
-            st.markdown(content)
-
-    # Chat input
-    if prompt := st.chat_input("Pose ta question sur le cours..."):
-        if not course_context and not web_search_toggle:
-            st.warning("Colle d'abord ton cours dans la barre latérale.")
+    # Input
+    if prompt := st.chat_input("Pose ta question…"):
+        if quotas["chat"]["remaining"] <= 0:
+            st.error("❌ Limite de messages atteinte (15/15). Reviens demain !")
             st.stop()
 
-        # Add user message
-        st.session_state["chat_messages"].append({
-            "role": "user", "content": prompt
-        })
+        # Message user
+        st.session_state["messages"].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         save_chat_message(db, session_id, "user", prompt)
 
-        should_search = web_search_toggle or _should_search_web(prompt)
-
-        if should_search and search_enabled:
-            if quotas["search"]["remaining"] <= 0:
-                st.warning("Quota de recherche web épuisé pour aujourd'hui.")
-                st.stop()
-            success, msg = consume_quota(db, session_id, "search")
-            if not success:
-                st.warning(msg)
-                st.stop()
-
-        # Consume chat quota before AI call
-        success, msg = consume_quota(db, session_id, "chat")
-        if not success:
-            st.warning(msg)
-            st.stop()
+        # Détection recherche web
+        wants_search = web_search or any(kw in prompt.lower() for kw in SEARCH_KEYWORDS)
+        used_search_quota = False
 
         with st.chat_message("assistant"):
-            with st.spinner("🤖 Réflexion en cours..."):
+            with st.spinner("🤔 Réflexion en cours…"):
                 try:
-                    if should_search and search_enabled:
+                    if wants_search and search_enabled and quotas["search"]["remaining"] > 0:
                         results = search_web(prompt)
-                        formatted = format_results(results)
-                        response = chat_with_search(prompt, formatted, course_context or "")
-                        log_activity(
-                            db, session_id, "chat_search",
-                            f"query={prompt[:100]}, results={len(results)}"
-                        )
                         if results:
-                            with st.expander("🌐 Sources web", expanded=False):
-                                for r in results:
-                                    st.markdown(f"- [{r['title']}]({r['href']})")
+                            with st.expander("🔍 Sources web consultées"):
+                                st.markdown(format_results(results))
+                            use_quota(db, session_id, "search")
+                            used_search_quota = True
+                            response = chat_with_search(prompt, results, context_text, model=selected_model)
+                        else:
+                            response = chat_response(context_text, prompt, st.session_state["messages"], model=selected_model)
                     else:
-                        response = chat_response(
-                            course_context or "", prompt,
-                            st.session_state["chat_messages"][-10:-1]
-                        )
-                        log_activity(
-                            db, session_id, "chat_message",
-                            f"query={prompt[:100]}"
-                        )
+                        if wants_search and quotas["search"]["remaining"] <= 0:
+                            st.info("ℹ️ Quota recherche épuisé. Je réponds sans recherche web.")
+                        response = chat_response(context_text, prompt, st.session_state["messages"], model=selected_model)
 
                     st.markdown(response)
-                    st.session_state["chat_messages"].append({
-                        "role": "assistant", "content": response
-                    })
+                    use_quota(db, session_id, "chat")
+                    st.session_state["messages"].append({"role": "assistant", "content": response})
                     save_chat_message(db, session_id, "assistant", response)
+                    log_activity(
+                        db, session_id,
+                        "chat_search" if used_search_quota else "chat",
+                        prompt[:100],
+                    )
                 except Exception as e:
-                    st.error(f"Erreur : {e}")
+                    st.error(f"❌ Erreur : {e}")
 
 
 if __name__ == "__main__":

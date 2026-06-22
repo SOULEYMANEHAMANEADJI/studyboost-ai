@@ -1,4 +1,4 @@
-"""Groq-based AI helpers for StudyBoost AI."""
+"""Groq-based AI helpers for StudyBoost AI — multi-modèles."""
 from __future__ import annotations
 
 import os
@@ -9,6 +9,16 @@ import streamlit as st
 from groq import Groq
 
 load_dotenv()
+
+AVAILABLE_MODELS = {
+    "⚡ Llama 3.1 8B (Rapide)": "llama-3.1-8b-instant",
+    "🧠 Llama 3.3 70B (Puissant)": "llama-3.3-70b-versatile",
+    "💎 Gemma 2 9B (Google)": "gemma2-9b-it",
+    "🔬 Mixtral 8x7B (Expert)": "mixtral-8x7b-32768",
+    "🚀 Llama 3.2 11B (Équilibré)": "llama-3.2-11b-text-preview",
+}
+
+DEFAULT_MODEL = "llama-3.1-8b-instant"
 
 STYLE_PROMPTS = {
     "resume": (
@@ -39,7 +49,6 @@ STYLE_PROMPTS = {
 
 
 def _get_client() -> Groq:
-    """Build a Groq client from secrets or environment."""
     try:
         api_key = st.secrets.get("GROQ_API_KEY")
     except Exception:
@@ -53,13 +62,13 @@ def _get_client() -> Groq:
 
 def _call_groq(
     messages: list[dict[str, str]],
+    model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
     max_tokens: int = 3000,
 ) -> str:
-    """Call Groq with the given messages and return the assistant message."""
     client = _get_client()
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=model,
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
@@ -67,10 +76,11 @@ def _call_groq(
     return response.choices[0].message.content.strip()
 
 
-def format_text(text: str, style: Literal[
-    "resume", "simplify", "fiche", "academic", "bullet_points", "quiz"
-]) -> str:
-    """Transform a user text into the requested style."""
+def format_text(
+    text: str,
+    style: Literal["resume", "simplify", "fiche", "academic", "bullet_points", "quiz"],
+    model: str = DEFAULT_MODEL,
+) -> str:
     system = (
         "Tu es un assistant pédagogique expert. Tu réponds toujours en français "
         "avec un format Markdown propre et structuré."
@@ -81,14 +91,17 @@ def format_text(text: str, style: Literal[
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
         ],
+        model=model,
         temperature=0.3,
     )
 
 
 def chat_response(
-    context: str, question: str, history: list[dict[str, str]]
+    context: str,
+    question: str,
+    history: list[dict[str, str]],
+    model: str = DEFAULT_MODEL,
 ) -> str:
-    """Answer a question using the provided course context."""
     system = (
         "Tu es StudyBoost AI, un tuteur pédagogique bienveillant. Tu réponds "
         "toujours en français avec du Markdown. Base ta réponse uniquement sur "
@@ -97,38 +110,58 @@ def chat_response(
     )
     messages = [
         {"role": "system", "content": system},
-        {
-            "role": "user",
-            "content": f"Voici mon cours :\n\n{context[:8000]}\n\nMerci de l'avoir lu. Réponds maintenant aux questions suivantes.",
-        },
     ]
+    if context.strip():
+        messages.append({
+            "role": "user",
+            "content": f"Voici mon cours (contexte) :\n\n{context[:8000]}",
+        })
+    else:
+        messages.append({
+            "role": "system",
+            "content": "Tu réponds comme assistant général sans contexte spécifique.",
+        })
     for msg in history[-10:]:
         messages.append({
             "role": msg.get("role", "user"),
             "content": msg.get("content", ""),
         })
     messages.append({"role": "user", "content": question})
-    return _call_groq(messages, temperature=0.4)
+    return _call_groq(messages, model=model, temperature=0.4)
 
 
 def chat_with_search(
-    question: str, search_results: str, context: str
+    question: str,
+    search_results: list[dict[str, str]],
+    context: str,
+    model: str = DEFAULT_MODEL,
 ) -> str:
-    """Synthesize web search results to answer a question."""
     system = (
         "Tu es StudyBoost AI. Tu réponds en français avec du Markdown. "
         "Utilise les résultats de recherche web fournis pour répondre de façon "
         "précise. Mentionne les sources si possible."
     )
+    formatted = _fmt_results(search_results)
     content = (
         f"Question : {question}\n\n"
-        f"Résultats de recherche web :\n{search_results}\n\n"
-        f"Contexte du cours de l'utilisateur (si utile) :\n{context[:4000]}"
+        f"Résultats de recherche web :\n{formatted}\n\n"
     )
+    if context.strip():
+        content += f"Contexte du cours de l'utilisateur :\n{context[:4000]}"
     return _call_groq(
         [
             {"role": "system", "content": system},
             {"role": "user", "content": content},
         ],
+        model=model,
         temperature=0.4,
     )
+
+
+def _fmt_results(results: list[dict[str, str]]) -> str:
+    if not results:
+        return "Aucun résultat trouvé."
+    lines = []
+    for i, r in enumerate(results, 1):
+        lines.append(f"{i}. {r.get('title', 'Sans titre')}\n   {r.get('body', '')[:300]}")
+    return "\n\n".join(lines)

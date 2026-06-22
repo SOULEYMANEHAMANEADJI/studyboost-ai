@@ -1,14 +1,14 @@
-"""StudyBoost AI - Editor page."""
+"""Éditeur de révision — Mode direct + Transformation IA."""
 from __future__ import annotations
 
 from datetime import datetime
 
 import streamlit as st
-from services.database import get_db, get_settings, log_activity
-from services.session_manager import get_session_id, init_session, get_quota, consume_quota
-from services.ai import format_text
+from services.ai import AVAILABLE_MODELS, format_text, DEFAULT_MODEL
+from services.database import get_db, get_settings, log_activity, use_quota
+from services.session_manager import get_session_id, init_session, get_quota
 from services.pdf_generator import markdown_to_pdf, generate_default_title
-from services.ui import inject_css, render_quota_sidebar
+from services.ui_helpers import inject_css, show_quota_sidebar, show_feature_disabled, quota_warning
 
 st.set_page_config(page_title="Éditeur - StudyBoost AI", page_icon="📝", layout="wide")
 
@@ -23,170 +23,165 @@ TRANSFORMATIONS = {
 
 
 def main():
-    inject_css()
+    dark_mode = st.sidebar.toggle("🌙 Mode nuit", value=False, key="editor_dark")
+    inject_css(dark_mode)
+
     db = get_db()
     settings = get_settings(db)
     session_id = get_session_id()
     init_session(db, settings)
+    quotas = get_quota(db, session_id, settings)
 
     pdf_enabled = settings.get("feature_pdf_enabled", "true").lower() == "true"
     md_enabled = settings.get("feature_md_enabled", "true").lower() == "true"
 
+    # Sidebar
     with st.sidebar:
-        st.markdown("## 📝 Éditeur de révision")
-        st.sidebar.markdown("---")
-        file_name = st.sidebar.text_input(
-            "Nom du fichier",
-            value=generate_default_title(),
-            placeholder="Mon_cours",
-        )
-        st.sidebar.markdown("---")
-        quotas = get_quota(db, session_id, settings)
-        pdf_remaining = quotas["pdf"]["remaining"]
-        pdf_limit = quotas["pdf"]["limit"]
-        pdf_used = quotas["pdf"]["used"]
-        pdf_pct = int((pdf_used / pdf_limit) * 100) if pdf_limit else 0
-        st.sidebar.markdown("#### 📊 Quota PDF")
-        st.sidebar.progress(min(pdf_pct, 100), text=f"{pdf_remaining} restant(s)")
-        if not pdf_enabled:
-            st.sidebar.warning("L'export PDF est désactivé par l'administrateur.")
-        st.sidebar.markdown("---")
-        render_quota_sidebar(db, session_id, settings)
+        st.markdown("## 📝 Éditeur")
+        st.markdown("---")
+        doc_title = st.text_input("Nom du fichier", value=generate_default_title())
+        st.markdown("---")
 
+        st.markdown("### 🤖 Modèle IA")
+        model_choice = st.selectbox(
+            "Choisir le modèle",
+            options=list(AVAILABLE_MODELS.keys()),
+            index=0,
+            key="editor_model",
+            help="Llama 8B pour la vitesse, Llama 70B pour la qualité.",
+        )
+        selected_model = AVAILABLE_MODELS[model_choice]
+        st.session_state["editor_model"] = selected_model
+        st.markdown("---")
+
+        show_quota_sidebar(quotas)
+        st.markdown("---")
+        if not pdf_enabled:
+            show_feature_disabled("Export PDF")
+
+    # Titre
     st.markdown("<h1 class='gradient-title'>📝 Éditeur de révision</h1>", unsafe_allow_html=True)
     st.markdown(
-        "<p style='text-align:center;color:#64748B;'>Colle ton texte, choisis une "
-        "transformation IA, édite et exporte.</p>",
+        "<p class='subtitle'>Colle ton texte, transforme-le avec l'IA ou édite-le directement.</p>",
         unsafe_allow_html=True,
     )
 
-    # Main text input
-    user_input = st.text_area(
-        "✏️ Colle ton cours ici",
-        height=220,
-        placeholder="Colle ton cours, article ou notes ici... (max 15 000 caractères)",
-        max_chars=15000,
-        key="editor_input",
+    # Étape 1 : Zone de saisie
+    source_text = st.text_area(
+        "📋 Colle ton texte ici",
+        height=200,
+        placeholder="Colle du texte brut, du Markdown, des notes de cours…",
+        key="source_text",
     )
 
-    # Word/char counter
-    if user_input:
-        words = len(user_input.split())
-        chars = len(user_input)
-        st.caption(f"{words} mots · {chars} caractères")
+    if source_text:
+        st.caption(f"{len(source_text.split())} mots · {len(source_text)} caractères")
+
+    # Étape 2 : Choix du mode
+    mode = st.radio(
+        "Mode",
+        ["✨ Transformer avec l'IA", "✏️ Éditer directement"],
+        horizontal=True,
+    )
+
+    if mode == "✨ Transformer avec l'IA":
+        st.markdown("### Choisis une transformation")
+        cols = st.columns(3)
+        selected_style = None
+        for i, (label, style) in enumerate(TRANSFORMATIONS.items()):
+            with cols[i % 3]:
+                if st.button(label, use_container_width=True, key=f"btn_{style}"):
+                    selected_style = style
+
+        if selected_style and source_text:
+            with st.spinner("🤖 L'IA transforme ton texte…"):
+                try:
+                    result = format_text(source_text, selected_style, model=selected_model)
+                    st.session_state["result_text"] = result
+                    log_activity(db, session_id, "editor_transform", f"style={selected_style}")
+                except Exception as e:
+                    st.error(f"Erreur IA : {e}")
+        elif selected_style and not source_text:
+            st.warning("Colle d'abord ton texte dans la zone ci-dessus.")
     else:
-        st.caption("0 mots · 0 caractères")
+        # Mode direct : le texte collé va directement dans l'édition
+        if source_text:
+            st.session_state["result_text"] = source_text
 
-    # Transformation buttons
-    st.markdown("### Choisis une transformation")
-    cols = st.columns(3)
-    selected_style = None
-    for i, (label, style) in enumerate(TRANSFORMATIONS.items()):
-        with cols[i % 3]:
-            if st.button(label, use_container_width=True, key=f"btn_{style}"):
-                selected_style = style
-
-    # Process transformation
-    result = st.session_state.get("editor_result", "")
-    if selected_style and user_input:
-        with st.spinner("🤖 L'IA transforme ton texte..."):
-            try:
-                result = format_text(user_input, selected_style)
-                st.session_state["editor_result"] = result
-                log_activity(
-                    db, session_id, "editor_transform",
-                    f"style={selected_style}, chars={len(user_input)}"
-                )
-            except Exception as e:
-                st.error(f"Erreur lors de la génération : {e}")
-                st.session_state["editor_result"] = ""
-    elif selected_style and not user_input:
-        st.warning("Colle d'abord ton texte dans la zone ci-dessus.")
-
-    # Display result
-    if st.session_state.get("editor_result"):
+    # Étape 3 : Zone d'édition + preview
+    if "result_text" in st.session_state and st.session_state["result_text"]:
         tab_edit, tab_preview = st.tabs(["✏️ Éditer", "👁️ Prévisualiser"])
+
         with tab_edit:
             edited = st.text_area(
-                "Texte éditable",
-                value=st.session_state["editor_result"],
-                height=350,
-                key="edit_area",
+                "Édite ton texte",
+                value=st.session_state["result_text"],
+                height=400,
+                key="final_edited_text",
             )
-            if edited != st.session_state["editor_result"]:
-                st.session_state["editor_result"] = edited
 
         with tab_preview:
-            st.markdown(st.session_state["editor_result"])
+            display = st.session_state.get("final_edited_text", st.session_state["result_text"])
+            st.markdown(display)
 
-        # Export section
+        final_text = st.session_state.get("final_edited_text", st.session_state["result_text"])
+
+        # Étape 4 : Export
         st.markdown("---")
         st.markdown("### 📤 Exporter")
-        exp_col1, exp_col2, exp_col3 = st.columns(3)
-        final_text = st.session_state["editor_result"]
-        file_title = file_name or generate_default_title()
 
-        with exp_col1:
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
             if md_enabled:
                 st.download_button(
-                    "📄 Télécharger .md",
+                    "📥 Télécharger .md",
                     data=final_text.encode("utf-8"),
-                    file_name=f"{file_title}.md",
+                    file_name=f"{doc_title}.md",
                     mime="text/markdown",
                     use_container_width=True,
-                    on_click=lambda: log_activity(
-                        db, session_id, "export_md",
-                        f"file={file_title}.md"
-                    ),
+                    type="primary",
                 )
             else:
-                st.info("Export Markdown désactivé")
+                st.button("📥 Markdown désactivé", disabled=True, use_container_width=True)
 
-        with exp_col2:
+        with col2:
             if pdf_enabled:
-                if st.button("📕 Générer PDF", use_container_width=True):
-                    if quotas["pdf"]["remaining"] <= 0:
-                        st.error("Quota PDF atteint pour aujourd'hui ! Reviens demain.")
-                    else:
-                        with st.spinner("Génération du PDF..."):
+                if quotas["pdf"]["remaining"] > 0:
+                    if st.button("📄 Générer PDF", use_container_width=True, type="primary"):
+                        with st.spinner("Génération du PDF…"):
                             try:
-                                success, msg = consume_quota(db, session_id, "pdf")
-                                if not success:
-                                    st.error(msg)
-                                else:
-                                    logo_path = "assets/logo.png"
-                                    pdf_bytes = markdown_to_pdf(
-                                        final_text, title=file_title, logo_path=logo_path
-                                    )
-                                    st.session_state["pdf_bytes"] = pdf_bytes
-                                    st.session_state["pdf_file_title"] = file_title
-                                    log_activity(
-                                        db, session_id, "export_pdf",
-                                        f"file={file_title}.pdf"
-                                    )
-                                    st.success("PDF généré avec succès !")
+                                pdf_bytes = markdown_to_pdf(
+                                    final_text, title=doc_title, logo_path="assets/logo.png"
+                                )
+                                use_quota(db, session_id, "pdf")
+                                log_activity(db, session_id, "pdf_export", doc_title)
+                                st.session_state["pdf_bytes"] = pdf_bytes
+                                st.session_state["pdf_title"] = doc_title
+                                st.success(f"✅ PDF prêt : {doc_title}.pdf")
                             except Exception as e:
                                 st.error(f"Erreur PDF : {e}")
-
-                if st.session_state.get("pdf_bytes"):
-                    st.download_button(
-                        "📕 Télécharger PDF",
-                        data=st.session_state["pdf_bytes"],
-                        file_name=f"{st.session_state.get('pdf_file_title', 'document')}.pdf",
-                        mime="application/pdf",
+                    if st.session_state.get("pdf_bytes"):
+                        st.download_button(
+                            "⬇️ Télécharger le PDF",
+                            data=st.session_state["pdf_bytes"],
+                            file_name=f"{st.session_state.get('pdf_title', 'document')}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+                else:
+                    st.button(
+                        f"📄 PDF (limite atteinte)",
+                        disabled=True,
                         use_container_width=True,
                     )
+                    st.caption("Limite quotidienne atteinte. Reviens demain !")
             else:
-                st.info("Export PDF désactivé")
+                st.button("📄 PDF désactivé", disabled=True, use_container_width=True)
 
-        with exp_col3:
-            st.text_area(
-                "📋 Copier le texte",
-                value=final_text,
-                height=200,
-                key="copy_area",
-            )
-            st.caption("Sélectionne et copie (Ctrl+C / Cmd+C)")
+        with col3:
+            st.text_area("📋 Copier le texte", value=final_text, height=100, key="copy_box")
+            st.caption("Sélectionne tout et copie (Ctrl+A, Ctrl+C)")
 
 
 if __name__ == "__main__":
