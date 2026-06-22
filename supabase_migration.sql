@@ -3,6 +3,46 @@
 -- Exécuter DANS L'ORDRE dans Supabase SQL Editor
 -- =============================================================
 
+-- 0. Créer la table sessions si elle n'existe pas (première installation)
+CREATE TABLE IF NOT EXISTS public.sessions (
+    id TEXT PRIMARY KEY,
+    pdf_count INTEGER DEFAULT 0,
+    chat_count INTEGER DEFAULT 0,
+    search_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    last_active TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 0b. Créer les autres tables si elles n'existent pas
+CREATE TABLE IF NOT EXISTS public.admin_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS public.chat_history (
+    id BIGSERIAL PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    content TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS public.activity_logs (
+    id BIGSERIAL PRIMARY KEY,
+    session_id TEXT,
+    action_type TEXT DEFAULT '',
+    action_detail TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS public.feedbacks (
+    id BIGSERIAL PRIMARY KEY,
+    session_id TEXT,
+    rating INTEGER DEFAULT 3,
+    comment TEXT DEFAULT '',
+    feature_request TEXT DEFAULT '',
+    other_idea TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- 1. Ajouter les colonnes manquantes à sessions
 ALTER TABLE public.sessions
   ADD COLUMN IF NOT EXISTS alias_emoji TEXT DEFAULT '🎓',
@@ -22,7 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_chat_history_session ON public.chat_history(sessi
 CREATE INDEX IF NOT EXISTS idx_activity_logs_session ON public.activity_logs(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON public.activity_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedbacks_created ON public.feedbacks(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_admin_settings_key ON public.admin_settings(key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_settings_key ON public.admin_settings(key);
 
 -- 4. Nettoyer les anciens modèles (gemma2 et mixtral retirés par Groq)
 DELETE FROM public.admin_settings WHERE key LIKE '%gemma2-9b-it%';
