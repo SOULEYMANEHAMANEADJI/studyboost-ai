@@ -29,11 +29,14 @@ def generate_default_title() -> str:
 
 
 class _PDFWithHeaderFooter:
-    def __init__(self, logo_path: str | None = None, doc_title: str = "StudyBoost AI"):
+    def __init__(self, logo_path: str | None = None, doc_title: str = "StudyBoost AI", neutral: bool = False):
         self.logo_path = logo_path if logo_path and os.path.exists(logo_path) else None
         self.doc_title = doc_title
+        self.neutral = neutral
 
     def header_footer(self, canvas_obj, doc):
+        if self.neutral:
+            return
         canvas_obj.saveState()
 
         if self.logo_path:
@@ -144,7 +147,7 @@ def _parse_md_to_flowables(text: str, styles: dict) -> list:
     return flowables
 
 
-def markdown_to_pdf(text: str, title: str | None = None, logo_path: str | None = None) -> bytes:
+def markdown_to_pdf(text: str, title: str | None = None, logo_path: str | None = None, neutral: bool = False) -> bytes:
     if not title:
         title = generate_default_title()
 
@@ -153,12 +156,12 @@ def markdown_to_pdf(text: str, title: str | None = None, logo_path: str | None =
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=3 * cm,
-        bottomMargin=2 * cm,
+        topMargin=3 * cm if not neutral else 2 * cm,
+        bottomMargin=2 * cm if not neutral else 1.5 * cm,
         leftMargin=2 * cm,
         rightMargin=2 * cm,
-        title=title,
-        author="StudyBoost AI",
+        title=title if not neutral else "",
+        author="StudyBoost AI" if not neutral else "",
     )
 
     base = getSampleStyleSheet()
@@ -171,9 +174,12 @@ def markdown_to_pdf(text: str, title: str | None = None, logo_path: str | None =
     }
 
     flowables = _parse_md_to_flowables(text, styles)
-    hf = _PDFWithHeaderFooter(logo_path=logo_path, doc_title=title)
+    hf = _PDFWithHeaderFooter(logo_path=logo_path, doc_title=title, neutral=neutral)
 
-    doc.build(flowables, onFirstPage=hf.header_footer, onLaterPages=hf.header_footer)
+    if not neutral:
+        doc.build(flowables, onFirstPage=hf.header_footer, onLaterPages=hf.header_footer)
+    else:
+        doc.build(flowables)
 
     pdf_bytes = buffer.getvalue()
     buffer.close()

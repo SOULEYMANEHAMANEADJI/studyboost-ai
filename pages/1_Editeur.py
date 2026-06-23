@@ -212,7 +212,7 @@ with col_dl2:
             st.error(f"❌ Limite atteinte ({quotas['pdf']['limit']} PDF/jour). Reviens demain !")
         else:
             logo_choice = st.radio(
-                "Logo", ["Avec logo StudyBoost", "Sans logo (neutre)"],
+                "Logo", ["Avec logo", "Sans logo"],
                 index=0, horizontal=True, label_visibility="collapsed",
                 key="pdf_logo_choice",
             )
@@ -220,9 +220,11 @@ with col_dl2:
                 with st.spinner("📄 Génération du PDF..."):
                     start = time.time()
                     try:
-                        logo = "assets/logo.png" if logo_choice == "Avec logo StudyBoost" else None
+                        with_logo = logo_choice == "Avec logo"
                         pdf_bytes = markdown_to_pdf(
-                            text=editor_text, title=doc_title, logo_path=logo,
+                            text=editor_text, title=doc_title,
+                            logo_path="assets/logo.png" if with_logo else None,
+                            neutral=not with_logo,
                         )
                         elapsed = time.time() - start
                         increment_quota(user_id, "pdf")

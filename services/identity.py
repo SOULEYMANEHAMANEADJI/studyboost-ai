@@ -57,8 +57,15 @@ def get_cookie_controller():
 
 def init_user_identity(db=None):
     controller = get_cookie_controller()
-
     existing_token = controller.get("studyboost_session_id")
+
+    # On first run after F5, cookie controller JS may not have loaded yet.
+    # If no cookie and no user_data, rerun once to let component initialise.
+    if existing_token is None and "user_data" not in st.session_state:
+        if "_identity_retry" not in st.session_state:
+            st.session_state["_identity_retry"] = True
+            st.rerun()
+            return None
 
     if existing_token and "user_data" not in st.session_state and db:
         try:
