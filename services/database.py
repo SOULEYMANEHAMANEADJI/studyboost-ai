@@ -126,6 +126,8 @@ def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
             "ai": {"used": 0, "limit": 9999},
         }
 
+    _maybe_reset_quotas(user_id, tbl)
+
     try:
         result = (
             db.table(tbl)
@@ -165,17 +167,43 @@ def _quota_remaining(q: dict) -> int:
     return max(0, q["limit"] - q["used"])
 
 
+def _quota_date_today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _maybe_reset_quotas(user_id: str, tbl: str):
+    """Reset quota counters if quota_date != today."""
+    db = get_db()
+    today = _quota_date_today()
+    try:
+        row = db.table(tbl).select("quota_date, last_active").eq("id", user_id).execute()
+        if row.data:
+            stored = row.data[0].get("quota_date") or ""
+            if stored != today:
+                db.table(tbl).update({
+                    "pdf_count": 0, "chat_count": 0,
+                    "search_count": 0, "ai_count": 0,
+                    "quota_date": today,
+                    "last_active": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", user_id).execute()
+                return True
+    except Exception as e:
+        logger.warning("_maybe_reset_quotas: échec pour %s", user_id, exc_info=e)
+    return False
+
+
 def increment_quota(user_id: str, quota_type: str):
     db = get_db()
     tbl = _table()
     col = f"{quota_type}_count"
 
     try:
-        current = db.table(tbl).select(col).eq("id", user_id).execute()
+        current = db.table(tbl).select(col, "quota_date").eq("id", user_id).execute()
         if current.data:
             val = (current.data[0].get(col, 0) or 0) + 1
             db.table(tbl).update({
                 col: val,
+                "quota_date": _quota_date_today(),
                 "last_active": datetime.now(timezone.utc).isoformat(),
             }).eq("id", user_id).execute()
     except Exception as e:

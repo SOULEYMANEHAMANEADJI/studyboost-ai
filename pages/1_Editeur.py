@@ -6,9 +6,9 @@ from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity
-from services.identity import get_user_id, is_admin
+from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
-from services.ui_helpers import inject_css, show_quota_sidebar
+from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
 
 
 def _render_markdown_html(text: str) -> str:
@@ -47,6 +47,7 @@ st.set_page_config(
 MAX_CHARS = 15000
 
 db = get_db()
+init_user_identity(db)
 settings = get_settings()
 user_id = get_user_id()
 
@@ -54,6 +55,7 @@ dark_mode = st.session_state.get("dark_mode", False)
 inject_css(dark_mode=dark_mode)
 
 with st.sidebar:
+    show_user_identity_sidebar()
     st.markdown("### ⚙️ Options")
     dark_mode_new = st.toggle("🌙 Mode nuit", value=dark_mode, key="editor_dark")
     if dark_mode_new != dark_mode:
@@ -70,11 +72,7 @@ with st.sidebar:
 
     quotas = get_user_quotas(user_id, admin_bypass=is_admin())
     if quotas:
-        show_quota_sidebar(quotas, keys=[
-            ("pdf", "📄", "PDF"),
-            ("ai", "✨", "IA"),
-        ])
-        st.caption("📥 Markdown : illimité")
+        show_quota_sidebar(quotas)
 
 col_title, col_name, col_download = st.columns([1, 2, 1.5])
 with col_title:
@@ -247,7 +245,7 @@ for col, (label, action) in zip(cols, ia_actions):
                         result = format_text(editor_text, action, model=selected_model)
                         st.session_state["editor_text"] = result
                         increment_quota(user_id, "ai")
-                        log_activity(user_id, "editor", action)
+                        log_activity(user_id, f"ai_{action}", selected_model)
                         st.success(f"✅ {label} terminé !")
                         st.rerun()
                     except StudyBoostAIError as e:

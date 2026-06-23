@@ -4,8 +4,8 @@ import re
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 from services.database import get_db, get_settings, save_feedback
-from services.identity import get_user_id
-from services.ui_helpers import inject_css
+from services.identity import get_user_id, init_user_identity
+from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
 
 
 _EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
@@ -28,15 +28,21 @@ FEATURES = [
 
 def main():
     dark_mode = st.session_state.get("dark_mode", False)
-    new_dark = st.sidebar.toggle("🌙 Mode nuit", value=dark_mode, key="fb_dark")
-    if new_dark != dark_mode:
-        st.session_state["dark_mode"] = new_dark
-        st.rerun()
     inject_css(dark_mode)
 
     db = get_db()
     settings = get_settings()
+    init_user_identity(db)
     user_id = get_user_id()
+
+    with st.sidebar:
+        show_user_identity_sidebar()
+        show_quota_sidebar()
+        st.markdown("---")
+        new_dark = st.toggle("🌙 Mode nuit", value=dark_mode, key="fb_dark")
+        if new_dark != dark_mode:
+            st.session_state["dark_mode"] = new_dark
+            st.rerun()
 
     st.markdown("<h1 class='gradient-title'>💡 Donne ton avis</h1>", unsafe_allow_html=True)
     st.markdown(

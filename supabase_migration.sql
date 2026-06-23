@@ -50,7 +50,8 @@ ALTER TABLE public.sessions
   ADD COLUMN IF NOT EXISTS alias_adjective TEXT DEFAULT 'Anonyme',
   ADD COLUMN IF NOT EXISTS alias_number INTEGER DEFAULT 0,
   ADD COLUMN IF NOT EXISTS alias_display TEXT DEFAULT '🎓 Anonyme',
-  ADD COLUMN IF NOT EXISTS ai_count INTEGER DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS ai_count INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS quota_date TEXT DEFAULT '';
 
 -- 2. Ajouter la colonne manquante à feedbacks
 ALTER TABLE public.feedbacks

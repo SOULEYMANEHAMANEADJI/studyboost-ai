@@ -202,39 +202,112 @@ header {{ visibility: hidden; }}
     color: #166534;
 }}
 
-/* Responsive */
+/* Responsive Mobile First */
 @media (max-width: 768px) {{
-    .gradient-title {{ font-size: 2rem !important; }}
-    .card {{ padding: 1.2rem !important; }}
+    [data-testid="column"] {{
+        width: 100% !important;
+        flex: 1 1 100% !important;
+    }}
+    .gradient-title {{ font-size: 1.8rem !important; }}
+    .card {{
+        padding: 1.2rem !important;
+        margin: 0.5rem 0 !important;
+    }}
     .step-container {{ padding: 1rem !important; }}
     .step-emoji {{ font-size: 2rem !important; }}
-    .stButton > button {{ font-size: 0.85rem !important; padding: 0.5rem 1rem !important; }}
+    .stButton > button {{ font-size: 0.85rem !important; }}
+    [data-testid="stSidebar"] {{ min-width: 280px !important; }}
+}}
+
+@media (max-width: 480px) {{
+    .gradient-title {{ font-size: 1.5rem !important; }}
+    .card h3 {{ font-size: 1.1rem !important; }}
+    .stButton button {{ width: 100% !important; }}
+}}
+
+.card {{
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    justify-content: space-between !important;
 }}
 </style>""", unsafe_allow_html=True)
 
 
-def show_quota_sidebar(quotas: dict, keys: list | None = None):
-    """Affiche les quotas dans la sidebar avec une charte graphique unifiée.
+def show_user_identity_sidebar():
+    """Affiche la carte d'identité utilisateur dans la sidebar."""
+    from services.identity import get_user_alias
 
-    keys: liste de tuples (key, emoji, label, color). Si None, utilise les défauts.
-    """
-    if keys is None:
-        keys = [
-            ("pdf", "📄", "PDF"),
-            ("chat", "💬", "Messages"),
-            ("search", "🔍", "Recherches"),
-            ("ai", "✨", "IA"),
-        ]
-    st.markdown("### 📊 Tes quotas du jour")
-    for key, emoji, label in keys:
+    alias = get_user_alias()
+    user_data = st.session_state.get("user_data", {})
+    is_returning = user_data.get("is_returning", False)
+    greeting = "👋 Bon retour !" if is_returning else "🎉 Bienvenue !"
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 12px;
+        margin-bottom: 1rem;
+        text-align: center;
+    ">
+        <div style="font-size: 1.05rem; font-weight: 700;">
+            {alias['display']}
+        </div>
+        <div style="font-size: 0.78rem; opacity: 0.95; margin-top: 0.4rem;">
+            {greeting}
+        </div>
+        <div style="font-size: 0.68rem; opacity: 0.75; margin-top: 0.2rem;">
+            🔒 Espace anonyme · 7 jours
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def show_quota_sidebar(quotas: dict | None = None):
+    """Affiche TOUS les quotas avec barres de progression."""
+    from services.identity import get_user_id
+    from services.database import get_user_quotas
+
+    if quotas is None:
+        uid = get_user_id()
+        if uid:
+            quotas = get_user_quotas(uid)
+    if not quotas:
+        return
+
+    st.markdown("### 📊 Quotas du jour")
+    items = [
+        ("pdf", "📄", "PDF"),
+        ("chat", "💬", "Messages"),
+        ("search", "🔍", "Recherches web"),
+        ("ai", "✨", "Transformations IA"),
+    ]
+    for key, emoji, label in items:
         q = quotas.get(key, {})
         used = q.get("used", 0)
         limit = q.get("limit", 10)
         remaining = max(0, limit - used)
         pct = min(used / limit, 1) if limit > 0 else 0
-        exhausted = remaining <= 0
-        st.caption(f"{emoji} {label} : {remaining}/{limit}{' ❌ Épuisé' if exhausted else ''}")
-        st.progress(pct)
+        color = "#EF4444" if pct >= 0.9 else ("#F59E0B" if pct >= 0.7 else "#10B981")
+
+        st.markdown(f"""
+        <div style="margin-bottom: 0.7rem;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.82rem;">
+                <span>{emoji} {label}</span>
+                <span style="color: {color}; font-weight: 700;">{remaining}/{limit}</span>
+            </div>
+            <div style="background: rgba(226, 232, 240, 0.5); height: 4px; border-radius: 2px; margin-top: 4px;">
+                <div style="background: {color}; width: {pct * 100}%; height: 100%; border-radius: 2px;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="font-size: 0.78rem; color: #10B981; margin-top: 0.8rem; padding: 0.5rem; background: rgba(16, 185, 129, 0.1); border-radius: 6px; text-align: center;">
+        📥 Markdown : illimité ∞
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def show_feature_disabled(feature_name: str):

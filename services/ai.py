@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Literal
 
 from dotenv import load_dotenv
+from groq import RateLimitError, APITimeoutError, APIConnectionError, AuthenticationError
 import streamlit as st
 
 from services.logger import get_logger
@@ -15,8 +17,10 @@ logger = get_logger("ai")
 
 
 class StudyBoostAIError(RuntimeError):
-    """Erreur métier liée à l'IA — ne pas exposer le détail technique à l'utilisateur."""
-    pass
+    """Erreur métier liée à l'IA avec code catégorie."""
+    def __init__(self, message: str, code: str = "unknown"):
+        super().__init__(message)
+        self.code = code
 
 AVAILABLE_MODELS = {
     "⚡ Llama 3.1 8B (Rapide - Recommandé)": "llama-3.1-8b-instant",
@@ -56,17 +60,53 @@ def get_groq_client():
     return Groq(api_key=_get_key("GROQ_API_KEY"))
 
 
-def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000):
+def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, max_retries=2):
     client = get_groq_client()
-    try:
-        response = client.chat.completions.create(
-            model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
-            timeout=60,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        logger.error("_call_groq: échec modèle=%s", model, exc_info=e)
-        raise StudyBoostAIError("Le service IA est temporairement indisponible. Réessaie dans quelques instants.") from e
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
+                timeout=60,
+            )
+            return response.choices[0].message.content.strip()
+
+        except RateLimitError:
+            if attempt < max_retries:
+                wait = 3
+                logger.warning("_call_groq: RateLimitError modèle=%s, tentative %d/%d, attente %ds",
+                               model, attempt + 1, max_retries, wait)
+                time.sleep(wait)
+                continue
+            raise StudyBoostAIError("⏳ Trop de demandes. Attends 30 secondes avant de réessayer.", "rate_limit")
+
+        except APITimeoutError:
+            if attempt < max_retries:
+                wait = 2
+                logger.warning("_call_groq: APITimeoutError modèle=%s, tentative %d/%d, attente %ds",
+                               model, attempt + 1, max_retries, wait)
+                time.sleep(wait)
+                continue
+            raise StudyBoostAIError("⏱️ L'IA met du temps à répondre. Essaie un texte plus court ou un autre modèle.", "timeout")
+
+        except APIConnectionError:
+            if attempt < max_retries:
+                wait = 2
+                logger.warning("_call_groq: APIConnectionError modèle=%s, tentative %d/%d, attente %ds",
+                               model, attempt + 1, max_retries, wait)
+                time.sleep(wait)
+                continue
+            raise StudyBoostAIError("📡 Problème de connexion. Vérifie ta connexion internet.", "network")
+
+        except AuthenticationError:
+            raise StudyBoostAIError("🔑 Erreur d'authentification. Contacte le support.", "auth")
+
+        except Exception as e:
+            logger.error("_call_groq: échec modèle=%s (tentative %d/%d)", model, attempt + 1, max_retries, exc_info=e)
+            if attempt < max_retries:
+                time.sleep(1)
+                continue
+            raise StudyBoostAIError("❌ Erreur inattendue. Réessaie dans quelques secondes.", "unknown")
 
 
 def format_text(

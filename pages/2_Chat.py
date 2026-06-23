@@ -6,9 +6,9 @@ from services.database import (
     get_db, get_settings, log_activity, save_chat_message,
     get_chat_history, clear_chat_history, get_user_quotas, increment_quota,
 )
-from services.identity import get_user_id, is_admin
+from services.identity import get_user_id, init_user_identity, is_admin
 from services.search import search_web, format_results
-from services.ui_helpers import inject_css, show_quota_sidebar
+from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
 
 st.set_page_config(page_title="Chat - StudyBoost AI", page_icon="💬", layout="wide")
 
@@ -27,6 +27,7 @@ def main():
     inject_css(dark_mode)
 
     db = get_db()
+    init_user_identity(db)
     settings = get_settings()
     user_id = get_user_id()
 
@@ -40,6 +41,7 @@ def main():
     quotas = get_user_quotas(user_id, admin_bypass=is_admin())
 
     with st.sidebar:
+        show_user_identity_sidebar()
         st.markdown("## 💬 Chat IA")
         st.markdown("---")
 
@@ -57,10 +59,13 @@ def main():
 
         web_search = False
         if search_enabled and quotas:
+            search_left = max(0, quotas["search"]["limit"] - quotas["search"]["used"])
+            search_exhausted = search_left <= 0
             web_search = st.toggle(
                 "🌐 Activer la recherche web",
-                value=False,
-                help=f"Recherche en ligne. {max(0, quotas['search']['limit'] - quotas['search']['used'])} restantes.",
+                value=False, disabled=search_exhausted,
+                help=("Quota épuisé pour aujourd'hui." if search_exhausted
+                      else f"Recherche en ligne. {search_left} restantes."),
             )
         else:
             st.caption("🌐 Recherche web désactivée")
@@ -76,11 +81,7 @@ def main():
         st.markdown("---")
 
         if quotas:
-            show_quota_sidebar(quotas, keys=[
-                ("chat", "💬", "Messages"),
-                ("search", "🔍", "Recherches"),
-                ("ai", "✨", "IA"),
-            ])
+            show_quota_sidebar(quotas)
         st.markdown("---")
 
         if st.button("🗑️ Nouvelle conversation", use_container_width=True):
@@ -94,9 +95,15 @@ def main():
         unsafe_allow_html=True,
     )
 
-    if "messages" not in st.session_state:
+    if "messages" not in st.session_state or st.session_state.get("last_user_id") != user_id:
+        if st.session_state.get("last_user_id") and st.session_state["last_user_id"] != user_id:
+            get_chat_history.clear()
         history = get_chat_history(user_id)
-        st.session_state["messages"] = history if history else []
+        st.session_state["messages"] = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in (history or [])
+        ]
+        st.session_state["last_user_id"] = user_id
         if not st.session_state["messages"]:
             welcome = (
                 "Bonjour ! 👋 Je suis **StudyBoost AI**. "
@@ -109,12 +116,13 @@ def main():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Pose ta question…"):
+    chat_disabled = quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0
+    if chat_disabled:
+        st.error(f"❌ Limite de messages atteinte ({quotas['chat']['limit']}/{quotas['chat']['limit']}). Reviens demain !")
+
+    if prompt := st.chat_input("Pose ta question…", disabled=chat_disabled):
         if len(prompt) > 5000:
             st.error("❌ Message trop long (5000 caractères max).")
-            st.stop()
-        if quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0:
-            st.error(f"❌ Limite de messages atteinte ({quotas['chat']['limit']}/{quotas['chat']['limit']}). Reviens demain !")
             st.stop()
 
         st.session_state["messages"].append({"role": "user", "content": prompt})
