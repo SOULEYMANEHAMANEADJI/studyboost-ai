@@ -7,7 +7,16 @@ from typing import Literal
 from dotenv import load_dotenv
 import streamlit as st
 
+from services.logger import get_logger
+
 load_dotenv()
+
+logger = get_logger("ai")
+
+
+class StudyBoostAIError(RuntimeError):
+    """Erreur métier liée à l'IA — ne pas exposer le détail technique à l'utilisateur."""
+    pass
 
 AVAILABLE_MODELS = {
     "⚡ Llama 3.1 8B (Rapide - Recommandé)": "llama-3.1-8b-instant",
@@ -31,7 +40,8 @@ STYLE_PROMPTS = {
 def _get_key(name: str) -> str:
     try:
         key = st.secrets.get(name)
-    except Exception:
+    except Exception as e:
+        logger.warning("_get_key: échec st.secrets pour %s, fallback os.environ", name, exc_info=e)
         key = None
     if not key:
         key = os.environ.get(name)
@@ -48,10 +58,15 @@ def get_groq_client():
 
 def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000):
     client = get_groq_client()
-    response = client.chat.completions.create(
-        model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = client.chat.completions.create(
+            model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
+            timeout=60,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.error("_call_groq: échec modèle=%s", model, exc_info=e)
+        raise StudyBoostAIError("Le service IA est temporairement indisponible. Réessaie dans quelques instants.") from e
 
 
 def format_text(

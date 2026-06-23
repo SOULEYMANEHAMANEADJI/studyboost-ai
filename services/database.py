@@ -8,13 +8,18 @@ from dotenv import load_dotenv
 import streamlit as st
 from supabase import Client, create_client
 
+from services.logger import get_logger
+
+logger = get_logger("database")
+
 load_dotenv()
 
 
 def _get_creds() -> dict:
     try:
         return {"url": st.secrets["SUPABASE_URL"], "key": st.secrets["SUPABASE_ANON_KEY"]}
-    except Exception:
+    except Exception as e:
+        logger.warning("_get_creds: fallback secrets→os.environ", exc_info=e)
         return {
             "url": os.environ.get("SUPABASE_URL", ""),
             "key": os.environ.get("SUPABASE_ANON_KEY", ""),
@@ -26,7 +31,12 @@ def get_db() -> Client:
     creds = _get_creds()
     if not creds["url"] or not creds["key"]:
         raise RuntimeError("Supabase credentials are missing.")
-    return create_client(creds["url"], creds["key"])
+    try:
+        from supabase import ClientOptions
+        opts = ClientOptions(postgrest_client_timeout=30)
+        return create_client(creds["url"], creds["key"], options=opts)
+    except (ImportError, TypeError):
+        return create_client(creds["url"], creds["key"])
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +65,8 @@ def get_settings() -> dict:
         result = db.table("admin_settings").select("key, value").execute()
         rows = result.data or []
         settings = {row["key"]: row["value"] for row in rows}
-    except Exception:
+    except Exception as e:
+        logger.error("get_settings: échec chargement settings depuis Supabase", exc_info=e)
         settings = {}
 
     for key, val in DEFAULT_SETTINGS.items():
@@ -63,8 +74,8 @@ def get_settings() -> dict:
             settings[key] = val
             try:
                 db.table("admin_settings").insert({"key": key, "value": val}).execute()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("get_settings: échec insertion setting %s", key, exc_info=e)
     return settings
 
 
@@ -80,7 +91,8 @@ def update_setting(key: str, value: str | int | bool) -> bool:
         get_settings.clear()
         return True
     except Exception as e:
-        st.error(f"Erreur de mise à jour: {e}")
+        logger.error("update_setting(%s): échec", key, exc_info=e)
+        st.error("Erreur lors de la mise à jour des paramètres.")
         return False
 
 
@@ -88,13 +100,15 @@ def update_setting(key: str, value: str | int | bool) -> bool:
 # Quotas (cache 30s)
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=3600)
 def _table() -> str:
     """Return sessions table name if it exists, else anonymous_sessions."""
     db = get_db()
     try:
         db.table("sessions").select("id").limit(1).execute()
         return "sessions"
-    except Exception:
+    except Exception as e:
+        logger.warning("_table(): sessions introuvable, fallback anonymous_sessions", exc_info=e)
         return "anonymous_sessions"
 
 
@@ -119,7 +133,8 @@ def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
             .eq("id", user_id)
             .execute()
         )
-    except Exception:
+    except Exception as e:
+        logger.error("get_user_quotas: échec récupération quotas pour %s", user_id, exc_info=e)
         return None
 
     if not result.data:
@@ -163,8 +178,8 @@ def increment_quota(user_id: str, quota_type: str):
                 col: val,
                 "last_active": datetime.now(timezone.utc).isoformat(),
             }).eq("id", user_id).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
 
     get_user_quotas.clear()
 
@@ -182,8 +197,8 @@ def log_activity(user_id: str, action_type: str, detail: str = ""):
             "action_detail": detail[:500],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("log_activity: échec pour %s / %s", user_id, action_type, exc_info=e)
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +214,8 @@ def save_chat_message(user_id: str, role: str, content: str):
             "content": content[:5000],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("save_chat_message: échec pour session %s", user_id, exc_info=e)
 
 
 @st.cache_data(ttl=10)
@@ -215,7 +230,8 @@ def get_chat_history(user_id: str) -> list:
             .execute()
         )
         return result.data or []
-    except Exception:
+    except Exception as e:
+        logger.error("get_chat_history: échec pour session %s", user_id, exc_info=e)
         return []
 
 
@@ -223,8 +239,8 @@ def clear_chat_history(user_id: str):
     db = get_db()
     try:
         db.table("chat_history").delete().eq("session_id", user_id).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("clear_chat_history: échec pour session %s", user_id, exc_info=e)
     get_chat_history.clear()
 
 
@@ -247,7 +263,8 @@ def save_feedback(user_id: str, rating: int, comment: str, feature_request: str,
         log_activity(user_id, "feedback", f"rating={rating}")
         return True
     except Exception as e:
-        st.error(f"Erreur feedback: {e}")
+        logger.error("save_feedback: échec enregistrement pour session %s", user_id, exc_info=e)
+        st.error("Une erreur est survenue lors de l'envoi de ton avis. Réessaie plus tard.")
         return False
 
 
@@ -265,13 +282,13 @@ def cleanup_old_data():
 
     try:
         db.table("chat_history").delete().lt("created_at", cutoff).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("cleanup_old_data: échec nettoyage chat_history", exc_info=e)
 
     try:
         db.table("sessions").delete().lt("last_active", cutoff).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +317,8 @@ def admin_get_stats(days: int = 7) -> dict:
     try:
         r = db.table("sessions").select("id", count="exact").execute()
         stats["total_sessions"] = r.count or 0
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("admin_get_stats: échec sessions count", exc_info=e)
 
     try:
         r = (
@@ -314,7 +331,8 @@ def admin_get_stats(days: int = 7) -> dict:
         actions = r.data or []
         stats["actions_period"] = len(actions)
         stats["recent_actions"] = actions[:30]
-    except Exception:
+    except Exception as e:
+        logger.error("admin_get_stats: échec activity_logs", exc_info=e)
         actions = []
 
     for a in actions:
@@ -349,8 +367,8 @@ def admin_get_stats(days: int = 7) -> dict:
                 feat = feat.strip()
                 if feat:
                     stats["feature_requests"][feat] = stats["feature_requests"].get(feat, 0) + 1
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("admin_get_stats: échec feedbacks", exc_info=e)
 
     return stats
 

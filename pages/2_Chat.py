@@ -1,14 +1,14 @@
 """Chat IA — avec/sans contexte, recherche web, multi-modèles."""
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
-from services.ai import AVAILABLE_MODELS, chat_response, chat_with_search
+from services.ai import AVAILABLE_MODELS, StudyBoostAIError, chat_response, chat_with_search
 from services.database import (
     get_db, get_settings, log_activity, save_chat_message,
     get_chat_history, clear_chat_history, get_user_quotas, increment_quota,
 )
 from services.identity import get_user_id, is_admin
 from services.search import search_web, format_results
-from services.ui_helpers import inject_css
+from services.ui_helpers import inject_css, show_quota_sidebar
 
 st.set_page_config(page_title="Chat - StudyBoost AI", page_icon="💬", layout="wide")
 
@@ -18,12 +18,12 @@ SEARCH_KEYWORDS = [
 ]
 
 
-def remaining(q: dict) -> int:
-    return max(0, q["limit"] - q["used"])
-
-
 def main():
-    dark_mode = st.sidebar.toggle("🌙 Mode nuit", value=False, key="chat_dark")
+    dark_mode = st.session_state.get("dark_mode", False)
+    new_dark = st.sidebar.toggle("🌙 Mode nuit", value=dark_mode, key="chat_dark")
+    if new_dark != dark_mode:
+        st.session_state["dark_mode"] = new_dark
+        st.rerun()
     inject_css(dark_mode)
 
     db = get_db()
@@ -60,7 +60,7 @@ def main():
             web_search = st.toggle(
                 "🌐 Activer la recherche web",
                 value=False,
-                help=f"Recherche en ligne. {remaining(quotas['search'])} restantes.",
+                help=f"Recherche en ligne. {max(0, quotas['search']['limit'] - quotas['search']['used'])} restantes.",
             )
         else:
             st.caption("🌐 Recherche web désactivée")
@@ -76,16 +76,11 @@ def main():
         st.markdown("---")
 
         if quotas:
-            st.markdown("### 📊 Quotas du jour")
-            for key, emoji, label in [
+            show_quota_sidebar(quotas, keys=[
                 ("chat", "💬", "Messages"),
                 ("search", "🔍", "Recherches"),
                 ("ai", "✨", "IA"),
-            ]:
-                q = quotas[key]
-                pct = q["used"] / q["limit"] if q["limit"] > 0 else 0
-                st.caption(f"{emoji} {label} : {remaining(q)}/{q['limit']}")
-                st.progress(pct)
+            ])
         st.markdown("---")
 
         if st.button("🗑️ Nouvelle conversation", use_container_width=True):
@@ -115,7 +110,10 @@ def main():
             st.markdown(msg["content"])
 
     if prompt := st.chat_input("Pose ta question…"):
-        if quotas and remaining(quotas["chat"]) <= 0:
+        if len(prompt) > 5000:
+            st.error("❌ Message trop long (5000 caractères max).")
+            st.stop()
+        if quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0:
             st.error(f"❌ Limite de messages atteinte ({quotas['chat']['limit']}/{quotas['chat']['limit']}). Reviens demain !")
             st.stop()
 
@@ -130,7 +128,7 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("🤔 Réflexion en cours…"):
                 try:
-                    if wants_search and search_enabled and quotas and remaining(quotas["search"]) > 0:
+                    if wants_search and search_enabled and quotas and max(0, quotas["search"]["limit"] - quotas["search"]["used"]) > 0:
                         results = search_web(prompt)
                         if results:
                             with st.expander("🔍 Sources web consultées"):
@@ -141,7 +139,7 @@ def main():
                         else:
                             response = chat_response(context_text, prompt, st.session_state["messages"], model=selected_model)
                     else:
-                        if wants_search and quotas and remaining(quotas["search"]) <= 0:
+                        if wants_search and quotas and max(0, quotas["search"]["limit"] - quotas["search"]["used"]) <= 0:
                             st.info("ℹ️ Quota recherche épuisé. Je réponds sans recherche web.")
                         response = chat_response(context_text, prompt, st.session_state["messages"], model=selected_model)
 
@@ -150,8 +148,10 @@ def main():
                     st.session_state["messages"].append({"role": "assistant", "content": response})
                     save_chat_message(user_id, "assistant", response)
                     log_activity(user_id, "chat_search" if used_search_quota else "chat", prompt[:100])
-                except Exception as e:
-                    st.error(f"❌ Erreur : {e}")
+                except StudyBoostAIError as e:
+                    st.error(f"❌ {e}")
+                except Exception:
+                    st.error("❌ Une erreur inattendue est survenue. Réessaie plus tard.")
 
 
 if __name__ == "__main__":

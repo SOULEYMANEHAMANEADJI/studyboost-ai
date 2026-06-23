@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from duckduckgo_search import DDGS
 
+from services.logger import get_logger
+
+logger = get_logger("search")
+
 
 def search_web(query: str, max_results: int = 5) -> list[dict[str, str]]:
     """Run a DuckDuckGo search (no API key) and return a list of results."""
@@ -15,7 +19,8 @@ def search_web(query: str, max_results: int = 5) -> list[dict[str, str]]:
                     "href": r.get("href", ""),
                     "body": r.get("body", ""),
                 })
-    except Exception:
+    except Exception as e:
+        logger.error("search_web: échec recherche pour « %s »", query[:80], exc_info=e)
         return []
     return results
 

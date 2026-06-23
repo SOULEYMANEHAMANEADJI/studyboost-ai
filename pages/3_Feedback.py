@@ -1,9 +1,14 @@
 """Feedback — formulaire d'avis utilisateur."""
+import re
+
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 from services.database import get_db, get_settings, save_feedback
 from services.identity import get_user_id
 from services.ui_helpers import inject_css
+
+
+_EMAIL_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 st.set_page_config(page_title="Avis - StudyBoost AI", page_icon="💡", layout="centered")
 
@@ -22,7 +27,11 @@ FEATURES = [
 
 
 def main():
-    dark_mode = st.sidebar.toggle("🌙 Mode nuit", value=False, key="fb_dark")
+    dark_mode = st.session_state.get("dark_mode", False)
+    new_dark = st.sidebar.toggle("🌙 Mode nuit", value=dark_mode, key="fb_dark")
+    if new_dark != dark_mode:
+        st.session_state["dark_mode"] = new_dark
+        st.rerun()
     inject_css(dark_mode)
 
     db = get_db()
@@ -76,6 +85,8 @@ def main():
         if submitted and not already_sent:
             if not comment.strip() and not other_idea.strip() and rating == 3:
                 st.warning("Ajoute au moins un commentaire ou une idée.")
+            elif email.strip() and not _EMAIL_RE.match(email.strip()):
+                st.warning("L'email n'est pas valide. Vérifie le format.")
             else:
                 ok = save_feedback(
                     user_id, rating, comment,

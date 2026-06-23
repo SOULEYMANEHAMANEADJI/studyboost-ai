@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 import streamlit as st
 from streamlit_cookies_controller import CookieController
 
+from services.logger import get_logger
+
+logger = get_logger("identity")
+
 
 def is_admin() -> bool:
     return st.session_state.get("admin_auth", False)
@@ -79,8 +83,8 @@ def init_user_identity(db=None):
                         "is_returning": True,
                     }
                     return st.session_state["user_data"]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("init_user_identity: échec validation session cookie %s", existing_token[:8], exc_info=e)
 
     if "user_data" not in st.session_state:
         new_id = str(uuid.uuid4())
@@ -102,13 +106,13 @@ def init_user_identity(db=None):
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "last_active": datetime.now(timezone.utc).isoformat(),
                 }).execute()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("init_user_identity: échec création session Supabase pour %s", new_id[:8], exc_info=e)
 
         try:
             controller.set("studyboost_session_id", new_id, max_age=7 * 24 * 60 * 60)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("init_user_identity: échec set cookie pour %s", new_id[:8], exc_info=e)
 
         st.session_state["user_data"] = {
             "id": new_id,
@@ -137,8 +141,8 @@ def logout():
     controller = get_cookie_controller()
     try:
         controller.remove("studyboost_session_id")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("logout: échec suppression cookie", exc_info=e)
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     st.rerun()

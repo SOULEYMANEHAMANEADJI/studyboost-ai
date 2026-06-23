@@ -4,44 +4,37 @@ Layout : éditeur à gauche + preview à droite.
 """
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
-from services.ai import AVAILABLE_MODELS, format_text
+from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity
 from services.identity import get_user_id, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
-from services.ui_helpers import inject_css
+from services.ui_helpers import inject_css, show_quota_sidebar
 
 
-def _render_markdown_html(text: str, dark_mode: bool = False) -> str:
+def _render_markdown_html(text: str) -> str:
     import markdown as md_lib
 
     html = md_lib.markdown(text, extensions=["fenced_code", "tables", "nl2br"])
-    tc = "#F1F5F9" if dark_mode else "#1E293B"
-    pr = "#A5B4FC" if dark_mode else "#4F46E5"
-    sc = "#C4B5FD" if dark_mode else "#7C3AED"
-    br = "#334155" if dark_mode else "#E2E8F0"
-    cb = "#1E293B" if dark_mode else "#F1F5F9"
-    qb = "#1E293B" if dark_mode else "#F8FAFC"
 
-    return f"""
+    return """
     <style>
-    .preview-content {{ color: {tc}; font-family: 'Inter', sans-serif; line-height: 1.6; }}
-    .preview-content h1 {{ color: {tc}; font-size: 1.8rem; font-weight: 800; margin-top: 0.5rem; border-bottom: 2px solid {pr}; padding-bottom: 0.3rem; }}
-    .preview-content h2 {{ color: {pr}; font-size: 1.4rem; font-weight: 700; margin-top: 1rem; }}
-    .preview-content h3 {{ color: {tc}; font-size: 1.15rem; font-weight: 700; margin-top: 0.8rem; }}
-    .preview-content p {{ margin: 0.5rem 0; }}
-    .preview-content ul, .preview-content ol {{ margin: 0.5rem 0; padding-left: 1.5rem; }}
-    .preview-content li {{ margin: 0.2rem 0; }}
-    .preview-content code {{ background: {cb}; color: {sc}; padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; }}
-    .preview-content pre {{ background: {cb}; padding: 12px; border-radius: 8px; overflow-x: auto; }}
-    .preview-content blockquote {{ border-left: 4px solid {pr}; background: {qb}; padding: 8px 16px; margin: 0.5rem 0; border-radius: 4px; }}
-    .preview-content strong {{ color: {pr}; }}
-    .preview-content hr {{ border: none; border-top: 1px solid {br}; margin: 1rem 0; }}
-    .preview-content table {{ border-collapse: collapse; width: 100%; margin: 0.5rem 0; }}
-    .preview-content th, .preview-content td {{ border: 1px solid {br}; padding: 8px; text-align: left; }}
-    .preview-content th {{ background: {cb}; }}
+    .preview-content { color: var(--preview-text); font-family: 'Inter', sans-serif; line-height: 1.6; }
+    .preview-content h1 { color: var(--preview-text); font-size: 1.8rem; font-weight: 800; margin-top: 0.5rem; border-bottom: 2px solid var(--preview-primary); padding-bottom: 0.3rem; }
+    .preview-content h2 { color: var(--preview-primary); font-size: 1.4rem; font-weight: 700; margin-top: 1rem; }
+    .preview-content h3 { color: var(--preview-text); font-size: 1.15rem; font-weight: 700; margin-top: 0.8rem; }
+    .preview-content p { margin: 0.5rem 0; }
+    .preview-content ul, .preview-content ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+    .preview-content li { margin: 0.2rem 0; }
+    .preview-content code { background: var(--preview-code-bg); color: var(--preview-secondary); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; }
+    .preview-content pre { background: var(--preview-code-bg); padding: 12px; border-radius: 8px; overflow-x: auto; }
+    .preview-content blockquote { border-left: 4px solid var(--preview-primary); background: var(--preview-quote-bg); padding: 8px 16px; margin: 0.5rem 0; border-radius: 4px; }
+    .preview-content strong { color: var(--preview-primary); }
+    .preview-content hr { border: none; border-top: 1px solid var(--preview-border); margin: 1rem 0; }
+    .preview-content table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
+    .preview-content th, .preview-content td { border: 1px solid var(--preview-border); padding: 8px; text-align: left; }
+    .preview-content th { background: var(--preview-code-bg); }
     </style>
-    <div class="preview-content">{html}</div>
-    """
+    <div class="preview-content">""" + html + "</div>"
 
 
 st.set_page_config(
@@ -77,15 +70,10 @@ with st.sidebar:
 
     quotas = get_user_quotas(user_id, admin_bypass=is_admin())
     if quotas:
-        st.markdown("### 📊 Quotas du jour")
-        for key, emoji, label in [
+        show_quota_sidebar(quotas, keys=[
             ("pdf", "📄", "PDF"),
             ("ai", "✨", "IA"),
-        ]:
-            q = quotas[key]
-            remaining = max(0, q["limit"] - q["used"])
-            st.caption(f"{emoji} {label} : {remaining}/{q['limit']}")
-            st.progress(q["used"] / q["limit"] if q["limit"] > 0 else 0)
+        ])
         st.caption("📥 Markdown : illimité")
 
 col_title, col_name, col_download = st.columns([1, 2, 1.5])
@@ -105,9 +93,10 @@ with col_name:
     doc_title = st.text_input(
         "Nom", value=st.session_state["doc_title"],
         label_visibility="collapsed", placeholder="Nom du document...",
-        key="doc_title_input",
+        key="doc_title_input", max_chars=100,
     )
-    st.session_state["doc_title"] = doc_title
+    clean = "".join(c for c in doc_title if c.isprintable()).strip()[:100]
+    st.session_state["doc_title"] = clean or "document"
 
 with col_download:
     download_format = st.selectbox(
@@ -175,13 +164,10 @@ with col_preview:
         '<span style="color:#94A3B8;font-size:0.85rem;">— Rendu en temps réel</span></div>',
         unsafe_allow_html=True,
     )
-    pb = "#0F172A" if dark_mode else "#FFFFFF"
-    pc = "#F1F5F9" if dark_mode else "#1E293B"
-    bc = "#334155" if dark_mode else "#E2E8F0"
     st.markdown(
         f'<div style="height:550px;overflow-y:auto;padding:20px;'
-        f"border:1px solid {bc};border-radius:8px;background:{pb};color:{pc};"
-        f'">{_render_markdown_html(editor_text, dark_mode)}</div>',
+        f"border:1px solid var(--preview-border);border-radius:8px;background:var(--bg-main);color:var(--text-main);"
+        f'">{_render_markdown_html(editor_text)}</div>',
         unsafe_allow_html=True,
     )
 
@@ -216,8 +202,8 @@ with col_dl2:
                         log_activity(user_id, "pdf_export", doc_title)
                         st.session_state["pdf_bytes"] = pdf_bytes
                         st.session_state["pdf_title"] = doc_title
-                    except Exception as e:
-                        st.error(f"❌ Erreur lors de la génération : {e}")
+                    except Exception:
+                        st.error("❌ Erreur lors de la génération du PDF. Vérifie que le contenu est valide.")
 
             if st.session_state.get("pdf_bytes"):
                 st.download_button(
@@ -264,5 +250,7 @@ for col, (label, action) in zip(cols, ia_actions):
                         log_activity(user_id, "editor", action)
                         st.success(f"✅ {label} terminé !")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Erreur IA : {e}")
+                    except StudyBoostAIError as e:
+                        st.error(f"❌ {e}")
+                    except Exception:
+                        st.error("❌ Une erreur inattendue est survenue. Réessaie plus tard.")

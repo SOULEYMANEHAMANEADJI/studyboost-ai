@@ -16,11 +16,7 @@ st.set_page_config(
 
 from services.database import get_db, get_settings, get_user_quotas, cleanup_old_data
 from services.identity import init_user_identity, get_user_alias, logout, is_admin
-from services.ui_helpers import inject_css
-
-
-def remaining(q: dict) -> int:
-    return max(0, q["limit"] - q["used"])
+from services.ui_helpers import inject_css, show_quota_sidebar
 
 
 def main():
@@ -60,24 +56,23 @@ def main():
         st.markdown("---")
         quotas = get_user_quotas(user["id"], admin_bypass=is_admin())
         if quotas:
-            st.markdown("### 📊 Tes quotas du jour")
-            for key, emoji, label in [
-                ("pdf", "📄", "PDF"),
-                ("chat", "💬", "Messages"),
-                ("search", "🔍", "Recherches"),
-                ("ai", "✨", "IA"),
-            ]:
-                q = quotas[key]
-                pct = q["used"] / q["limit"] if q["limit"] > 0 else 0
-                remaining_qty = remaining(q)
-                st.caption(f"{emoji} {label} : {remaining_qty}/{q['limit']}")
-                if remaining_qty <= 0:
-                    st.caption(f"❌ Épuisé — reviens demain")
-                st.progress(pct)
+            show_quota_sidebar(quotas)
 
         st.markdown("---")
-        if st.button("🔄 Nouvelle identité", use_container_width=True):
-            logout()
+        if st.session_state.get("confirm_new_id"):
+            st.warning("⚠️ Cette action supprime ton historique de la session.")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ Oui, nouvelle identité", use_container_width=True, type="primary"):
+                    st.session_state["confirm_new_id"] = False
+                    logout()
+            with c2:
+                if st.button("❌ Annuler", use_container_width=True):
+                    st.session_state["confirm_new_id"] = False
+                    st.rerun()
+        elif st.button("🔄 Nouvelle identité", use_container_width=True):
+            st.session_state["confirm_new_id"] = True
+            st.rerun()
 
     st.markdown(
         '<h1 class="gradient-title">🎓 StudyBoost AI</h1>',

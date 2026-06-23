@@ -27,7 +27,7 @@ streamlit run app.py
 - **IA** : Groq (Llama 3.1 8B)
 - **Base de données** : Supabase (PostgreSQL)
 - **Recherche web** : DuckDuckGo
-- **PDF** : FPDF2
+- **PDF** : ReportLab
 
 ## Configuration
 
