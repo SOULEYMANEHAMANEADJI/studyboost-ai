@@ -35,8 +35,6 @@ class _PDFWithHeaderFooter:
         self.neutral = neutral
 
     def header_footer(self, canvas_obj, doc):
-        if self.neutral:
-            return
         canvas_obj.saveState()
 
         if self.logo_path:
@@ -53,31 +51,38 @@ class _PDFWithHeaderFooter:
         else:
             text_x = 1.5 * cm
 
-        canvas_obj.setFillColor(PRIMARY_COLOR)
-        canvas_obj.setFont("Helvetica-Bold", 13)
-        canvas_obj.drawString(text_x, A4[1] - 1.5 * cm, "StudyBoost AI")
+        if not self.neutral:
+            canvas_obj.setFillColor(PRIMARY_COLOR)
+            canvas_obj.setFont("Helvetica-Bold", 13)
+            canvas_obj.drawString(text_x, A4[1] - 1.5 * cm, "StudyBoost AI")
 
-        canvas_obj.setFillColor(GRAY_COLOR)
-        canvas_obj.setFont("Helvetica", 8)
-        canvas_obj.drawString(text_x, A4[1] - 2 * cm, self.doc_title)
+            canvas_obj.setFillColor(GRAY_COLOR)
+            canvas_obj.setFont("Helvetica", 8)
+            canvas_obj.drawString(text_x, A4[1] - 2 * cm, self.doc_title)
 
-        canvas_obj.setStrokeColor(PRIMARY_COLOR)
-        canvas_obj.setLineWidth(0.8)
-        canvas_obj.line(1.5 * cm, A4[1] - 2.5 * cm, A4[0] - 1.5 * cm, A4[1] - 2.5 * cm)
+            canvas_obj.setStrokeColor(PRIMARY_COLOR)
+            canvas_obj.setLineWidth(0.8)
+            canvas_obj.line(1.5 * cm, A4[1] - 2.5 * cm, A4[0] - 1.5 * cm, A4[1] - 2.5 * cm)
+
+            canvas_obj.setFillColor(LIGHT_GRAY)
+            canvas_obj.setFont("Helvetica-Oblique", 8)
+            canvas_obj.drawString(1.5 * cm, 1 * cm, "Généré par StudyBoost AI")
 
         canvas_obj.setStrokeColor(HexColor("#E2E8F0"))
         canvas_obj.setLineWidth(0.5)
         canvas_obj.line(1.5 * cm, 1.5 * cm, A4[0] - 1.5 * cm, 1.5 * cm)
 
-        canvas_obj.setFillColor(LIGHT_GRAY)
-        canvas_obj.setFont("Helvetica-Oblique", 8)
-        canvas_obj.drawString(1.5 * cm, 1 * cm, "Généré par StudyBoost AI")
-
         page_num = canvas_obj.getPageNumber()
-        canvas_obj.drawRightString(
-            A4[0] - 1.5 * cm, 1 * cm,
-            f"Page {page_num}",
-        )
+        if not self.neutral:
+            canvas_obj.drawRightString(
+                A4[0] - 1.5 * cm, 1 * cm,
+                f"Page {page_num}",
+            )
+        else:
+            canvas_obj.drawCentredString(
+                A4[0] / 2, 1 * cm,
+                f"— {page_num} —",
+            )
 
         canvas_obj.restoreState()
 
@@ -156,11 +161,11 @@ def markdown_to_pdf(text: str, title: str | None = None, logo_path: str | None =
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        topMargin=3 * cm if not neutral else 2 * cm,
-        bottomMargin=2 * cm if not neutral else 1.5 * cm,
+        topMargin=3 * cm,
+        bottomMargin=2 * cm,
         leftMargin=2 * cm,
         rightMargin=2 * cm,
-        title=title if not neutral else "",
+        title=title,
         author="StudyBoost AI" if not neutral else "",
     )
 
@@ -176,10 +181,7 @@ def markdown_to_pdf(text: str, title: str | None = None, logo_path: str | None =
     flowables = _parse_md_to_flowables(text, styles)
     hf = _PDFWithHeaderFooter(logo_path=logo_path, doc_title=title, neutral=neutral)
 
-    if not neutral:
-        doc.build(flowables, onFirstPage=hf.header_footer, onLaterPages=hf.header_footer)
-    else:
-        doc.build(flowables)
+    doc.build(flowables, onFirstPage=hf.header_footer, onLaterPages=hf.header_footer)
 
     pdf_bytes = buffer.getvalue()
     buffer.close()
