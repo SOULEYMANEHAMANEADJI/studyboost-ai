@@ -81,7 +81,7 @@ with col_title:
         '<span style="font-size:1.8rem;">🎓</span>'
         '<span style="font-size:1.3rem;font-weight:800;background:linear-gradient(135deg,#4F46E5,#7C3AED);'
         "-webkit-background-clip:text;-webkit-text-fill-color:transparent;"
-        '">StudyBoost</span></div>"',
+        '">StudyBoost</span></div>',
         unsafe_allow_html=True,
     )
 
