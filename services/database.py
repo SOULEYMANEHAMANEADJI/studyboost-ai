@@ -273,6 +273,37 @@ def clear_chat_history(user_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Draft persistence (éditeur)
+# ---------------------------------------------------------------------------
+
+def save_draft(user_id: str, text: str, model: str | None = None):
+    db = get_db()
+    tbl = _table()
+    update = {"draft_text": text[:15000], "last_active": datetime.now(timezone.utc).isoformat()}
+    if model:
+        update["preferred_model"] = model
+    try:
+        db.table(tbl).update(update).eq("id", user_id).execute()
+    except Exception as e:
+        logger.warning("save_draft: échec pour %s", user_id, exc_info=e)
+    load_draft.clear()
+
+
+@st.cache_data(ttl=5)
+def load_draft(user_id: str) -> tuple:
+    db = get_db()
+    tbl = _table()
+    try:
+        row = db.table(tbl).select("draft_text, preferred_model").eq("id", user_id).execute()
+        if row.data:
+            r = row.data[0]
+            return (r.get("draft_text") or "", r.get("preferred_model") or "")
+    except Exception as e:
+        logger.warning("load_draft: échec pour %s", user_id, exc_info=e)
+    return ("", "")
+
+
+# ---------------------------------------------------------------------------
 # Feedback
 # ---------------------------------------------------------------------------
 

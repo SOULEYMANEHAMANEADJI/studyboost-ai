@@ -202,7 +202,28 @@ header {{ visibility: hidden; }}
     color: #166534;
 }}
 
+/* Fade-in animation */
+@keyframes fadeIn {{
+    from {{ opacity: 0; transform: translateY(8px); }}
+    to {{ opacity: 1; transform: translateY(0); }}
+}}
+.stApp {{
+    animation: fadeIn 0.4s ease-out;
+}}
+
+/* Cards */
+.card {{
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    justify-content: space-between !important;
+}}
+
 /* Responsive Mobile First */
+@media (max-width: 1024px) {{
+    .gradient-title {{ font-size: 2.2rem !important; }}
+}}
+
 @media (max-width: 768px) {{
     [data-testid="column"] {{
         width: 100% !important;
@@ -217,19 +238,26 @@ header {{ visibility: hidden; }}
     .step-emoji {{ font-size: 2rem !important; }}
     .stButton > button {{ font-size: 0.85rem !important; }}
     [data-testid="stSidebar"] {{ min-width: 280px !important; }}
+    /* IA buttons: 2x3 grid on mobile */
+    [data-testid="column"] .stButton button {{
+        font-size: 0.8rem !important;
+        padding: 0.4rem 0.6rem !important;
+    }}
 }}
 
 @media (max-width: 480px) {{
     .gradient-title {{ font-size: 1.5rem !important; }}
     .card h3 {{ font-size: 1.1rem !important; }}
     .stButton button {{ width: 100% !important; }}
-}}
-
-.card {{
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100% !important;
-    justify-content: space-between !important;
+    /* Ensure preview doesn't overflow */
+    .preview-content {{
+        word-break: break-word !important;
+        overflow-wrap: break-word !important;
+    }}
+    .preview-content pre {{
+        white-space: pre-wrap !important;
+        font-size: 0.75rem !important;
+    }}
 }}
 </style>""", unsafe_allow_html=True)
 

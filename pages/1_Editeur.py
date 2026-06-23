@@ -2,10 +2,11 @@
 Éditeur Markdown avec preview en temps réel.
 Layout : éditeur à gauche + preview à droite.
 """
+import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
-from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity
+from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
@@ -64,10 +65,21 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("### 🤖 Modèle IA")
+    saved_model = st.session_state.get("preferred_model", "")
+    model_keys = list(AVAILABLE_MODELS.keys())
+    model_index = 0
+    if saved_model:
+        for i, k in enumerate(model_keys):
+            if AVAILABLE_MODELS[k] == saved_model:
+                model_index = i
+                break
     model_name = st.selectbox(
-        "Modèle", options=list(AVAILABLE_MODELS.keys()), index=0, label_visibility="collapsed",
+        "Modèle", options=model_keys, index=model_index, label_visibility="collapsed",
     )
     selected_model = AVAILABLE_MODELS[model_name]
+    if st.session_state.get("preferred_model") != selected_model:
+        st.session_state["preferred_model"] = selected_model
+        save_draft(user_id, st.session_state.get("editor_text", ""), model=selected_model)
     st.markdown("---")
 
     quotas = get_user_quotas(user_id, admin_bypass=is_admin())
@@ -106,7 +118,13 @@ with col_download:
 st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
 
 if "editor_text" not in st.session_state:
-    st.session_state["editor_text"] = """# Bienvenue sur StudyBoost AI 🎓
+    draft_text, draft_model = load_draft(user_id)
+    if draft_text:
+        st.session_state["editor_text"] = draft_text
+        if draft_model:
+            st.session_state["preferred_model"] = draft_model
+    else:
+        st.session_state["editor_text"] = """# Bienvenue sur StudyBoost AI 🎓
 
 Commence à **écrire ton Markdown** ici ou colle ton cours.
 
@@ -144,6 +162,9 @@ with col_editor:
         placeholder="Tape ou colle ton Markdown ici...",
     )
     st.session_state["editor_text"] = editor_text
+    if st.session_state.get("_last_draft") != editor_text:
+        save_draft(user_id, editor_text)
+        st.session_state["_last_draft"] = editor_text
     chars = len(editor_text)
     words = len(editor_text.split())
     pct = (chars / MAX_CHARS) * 100
@@ -190,16 +211,25 @@ with col_dl2:
         elif quotas and quotas["pdf"]["used"] >= quotas["pdf"]["limit"]:
             st.error(f"❌ Limite atteinte ({quotas['pdf']['limit']} PDF/jour). Reviens demain !")
         else:
+            logo_choice = st.radio(
+                "Logo", ["Avec logo StudyBoost", "Sans logo (neutre)"],
+                index=0, horizontal=True, label_visibility="collapsed",
+                key="pdf_logo_choice",
+            )
             if st.button("📄 Générer et télécharger le PDF", use_container_width=True, type="primary"):
                 with st.spinner("📄 Génération du PDF..."):
+                    start = time.time()
                     try:
+                        logo = "assets/logo.png" if logo_choice == "Avec logo StudyBoost" else None
                         pdf_bytes = markdown_to_pdf(
-                            text=editor_text, title=doc_title, logo_path="assets/logo.png",
+                            text=editor_text, title=doc_title, logo_path=logo,
                         )
+                        elapsed = time.time() - start
                         increment_quota(user_id, "pdf")
                         log_activity(user_id, "pdf_export", doc_title)
                         st.session_state["pdf_bytes"] = pdf_bytes
                         st.session_state["pdf_title"] = doc_title
+                        st.success(f"✅ PDF généré en {elapsed:.1f}s")
                     except Exception:
                         st.error("❌ Erreur lors de la génération du PDF. Vérifie que le contenu est valide.")
 
@@ -235,20 +265,20 @@ cols = st.columns(6)
 for col, (label, action) in zip(cols, ia_actions):
     with col:
         if st.button(label, use_container_width=True, key=f"ia_{action}"):
-            if not editor_text.strip():
-                st.warning("⚠️ Ajoute du texte avant d'utiliser l'IA")
-            elif quotas and quotas["ai"]["used"] >= quotas["ai"]["limit"]:
+            if quotas and quotas["ai"]["used"] >= quotas["ai"]["limit"]:
                 st.error(f"❌ Limite IA atteinte ({quotas['ai']['limit']} transformations/jour). Reviens demain !")
             else:
                 with st.spinner(f"✨ {label} en cours..."):
+                    start = time.time()
                     try:
                         result = format_text(editor_text, action, model=selected_model)
+                        elapsed = time.time() - start
                         st.session_state["editor_text"] = result
                         increment_quota(user_id, "ai")
                         log_activity(user_id, f"ai_{action}", selected_model)
-                        st.success(f"✅ {label} terminé !")
+                        st.success(f"✅ {label} terminé en {elapsed:.1f}s")
                         st.rerun()
                     except StudyBoostAIError as e:
                         st.error(f"❌ {e}")
                     except Exception:
-                        st.error("❌ Une erreur inattendue est survenue. Réessaie plus tard.")
+                        st.error("❌ Une erreur s'est produite. Réessaie dans quelques instants.")

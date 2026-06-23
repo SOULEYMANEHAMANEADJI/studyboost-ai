@@ -1,4 +1,5 @@
 """Chat IA — avec/sans contexte, recherche web, multi-modèles."""
+import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, chat_response, chat_with_search
@@ -135,6 +136,7 @@ def main():
 
         with st.chat_message("assistant"):
             with st.spinner("🤔 Réflexion en cours…"):
+                start = time.time()
                 try:
                     if wants_search and search_enabled and quotas and max(0, quotas["search"]["limit"] - quotas["search"]["used"]) > 0:
                         results = search_web(prompt)
@@ -151,7 +153,11 @@ def main():
                             st.info("ℹ️ Quota recherche épuisé. Je réponds sans recherche web.")
                         response = chat_response(context_text, prompt, st.session_state["messages"], model=selected_model)
 
+                    if not response.strip():
+                        response = "🤔 L'IA n'a pas pu générer de réponse. Reformule ta question."
+
                     st.markdown(response)
+                    elapsed = time.time() - start
                     increment_quota(user_id, "chat")
                     st.session_state["messages"].append({"role": "assistant", "content": response})
                     save_chat_message(user_id, "assistant", response)
@@ -159,7 +165,7 @@ def main():
                 except StudyBoostAIError as e:
                     st.error(f"❌ {e}")
                 except Exception:
-                    st.error("❌ Une erreur inattendue est survenue. Réessaie plus tard.")
+                    st.error("❌ Une erreur s'est produite. Réessaie dans quelques instants.")
 
 
 if __name__ == "__main__":

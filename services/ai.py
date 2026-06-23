@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from typing import Literal
 
@@ -32,12 +33,43 @@ AVAILABLE_MODELS = {
 DEFAULT_MODEL = "llama-3.1-8b-instant"
 
 STYLE_PROMPTS = {
-    "resume": "Résume le texte suivant de manière claire et structurée en français. Utilise des paragraphes et des listes à puces si pertinent.",
-    "simplify": "Simplifie le texte suivant pour qu'il soit compréhensible par un enfant de 12 ans. Utilise un vocabulaire simple, des phrases courtes et des exemples concrets. Réponds en français.",
-    "fiche": "Transforme le texte suivant en une fiche de révision complète en français. Inclus : définitions importantes, idées clés, formules ou dates si pertinent, et une checklist finale.",
-    "academic": "Réécrit le texte suivant dans un style académique rigoureux en français. Structure l'argumentation, utilise un vocabulaire soutenu, et conserve les idées essentielles.",
-    "bullet_points": "Extrais les points clés du texte suivant sous forme de liste à puces en français. Sois concis et hiérarchise les informations.",
-    "quiz": "Crée un quiz de révision à partir du texte suivant. Propose 5 questions avec leurs réponses en français, au format Markdown (Q1, R1, etc.).",
+    "resume": (
+        "Résume STRICTEMENT le texte ci-dessous. "
+        "Ne génère AUCUNE information qui n'est pas dans le texte. "
+        "Si le texte est insuffisant ou incompréhensible, réponds exactement : "
+        '"⚠️ Le texte fourni est trop court ou incompréhensible pour cette action."'
+    ),
+    "simplify": (
+        "Simplifie STRICTEMENT le texte ci-dessous pour qu'il soit compréhensible par un enfant de 12 ans. "
+        "Ne génère AUCUNE information qui n'est pas dans le texte. "
+        "Si le texte est insuffisant ou incompréhensible, réponds exactement : "
+        '"⚠️ Le texte fourni est trop court ou incompréhensible pour cette action."'
+    ),
+    "fiche": (
+        "Transforme STRICTEMENT le texte ci-dessous en une fiche de révision complète en français. "
+        "Ne génère AUCUNE information qui n'est pas dans le texte. "
+        "Si le texte est insuffisant ou incompréhensible, réponds exactement : "
+        '"⚠️ Le texte fourni est trop court ou incompréhensible pour cette action."'
+    ),
+    "academic": (
+        "Réécris STRICTEMENT le texte ci-dessous dans un style académique rigoureux en français. "
+        "Ne génère AUCUNE information qui n'est pas dans le texte. "
+        "Si le texte est insuffisant ou incompréhensible, réponds exactement : "
+        '"⚠️ Le texte fourni est trop court ou incompréhensible pour cette action."'
+    ),
+    "bullet_points": (
+        "Extrais STRICTEMENT les points clés du texte ci-dessous sous forme de liste à puces en français. "
+        "Ne génère AUCUNE information qui n'est pas dans le texte. "
+        "Si le texte est insuffisant ou incompréhensible, réponds exactement : "
+        '"⚠️ Le texte fourni est trop court ou incompréhensible pour cette action."'
+    ),
+    "quiz": (
+        "Crée STRICTEMENT un quiz de révision à partir du texte ci-dessous. "
+        "Propose 5 questions avec leurs réponses en français, au format Markdown (Q1, R1, etc.). "
+        "Ne génère AUCUNE information qui n'est pas dans le texte. "
+        "Si le texte est insuffisant ou incompréhensible, réponds exactement : "
+        '"⚠️ Le texte fourni est trop court ou incompréhensible pour cette action."'
+    ),
 }
 
 
@@ -78,7 +110,7 @@ def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, 
                                model, attempt + 1, max_retries, wait)
                 time.sleep(wait)
                 continue
-            raise StudyBoostAIError("⏳ Trop de demandes. Attends 30 secondes avant de réessayer.", "rate_limit")
+            raise StudyBoostAIError("⏳ Trop de demandes. Attends 30 secondes et réessaie.", "rate_limit")
 
         except APITimeoutError:
             if attempt < max_retries:
@@ -87,7 +119,7 @@ def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, 
                                model, attempt + 1, max_retries, wait)
                 time.sleep(wait)
                 continue
-            raise StudyBoostAIError("⏱️ L'IA met du temps à répondre. Essaie un texte plus court ou un autre modèle.", "timeout")
+            raise StudyBoostAIError("⏱️ L'IA met trop de temps à répondre. Réessaie avec un texte plus court.", "timeout")
 
         except APIConnectionError:
             if attempt < max_retries:
@@ -96,7 +128,7 @@ def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, 
                                model, attempt + 1, max_retries, wait)
                 time.sleep(wait)
                 continue
-            raise StudyBoostAIError("📡 Problème de connexion. Vérifie ta connexion internet.", "network")
+            raise StudyBoostAIError("📡 Vérifie ta connexion internet.", "network")
 
         except AuthenticationError:
             raise StudyBoostAIError("🔑 Erreur d'authentification. Contacte le support.", "auth")
@@ -106,7 +138,20 @@ def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, 
             if attempt < max_retries:
                 time.sleep(1)
                 continue
-            raise StudyBoostAIError("❌ Erreur inattendue. Réessaie dans quelques secondes.", "unknown")
+            raise StudyBoostAIError("❌ Une erreur s'est produite. Réessaie dans quelques instants.", "unknown")
+
+
+_REPEAT_RE = re.compile(r"^(.)\1{10,}$")
+
+
+def validate_text(text: str) -> str | None:
+    """Validate text before AI call. Returns error message or None."""
+    stripped = text.strip()
+    if len(stripped) < 50:
+        return "📝 Ton texte est trop court (minimum 50 caractères) pour utiliser cette transformation."
+    if _REPEAT_RE.match(stripped):
+        return "📝 Le texte semble invalide. Ajoute un vrai contenu à transformer."
+    return None
 
 
 def format_text(
@@ -114,12 +159,19 @@ def format_text(
     style: Literal["resume", "simplify", "fiche", "academic", "bullet_points", "quiz"],
     model: str = DEFAULT_MODEL,
 ) -> str:
+    err = validate_text(text)
+    if err:
+        raise StudyBoostAIError(err, "validation")
+
     system = "Tu es un assistant pédagogique expert. Tu réponds toujours en français avec un format Markdown propre et structuré."
     prompt = f"{STYLE_PROMPTS[style]}\n\n---\n\n{text}"
-    return _call_groq(
+    result = _call_groq(
         [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         model=model, temperature=0.3,
     )
+    if not result.strip():
+        raise StudyBoostAIError("🤔 L'IA n'a pas pu générer de réponse. Reformule ton texte.", "empty")
+    return result
 
 
 def chat_response(context: str, question: str, history: list, model: str = DEFAULT_MODEL) -> str:
