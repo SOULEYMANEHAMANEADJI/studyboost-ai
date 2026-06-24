@@ -6,6 +6,9 @@ import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
+from services.logger import get_logger
+
+logger = get_logger("editor")
 from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
@@ -233,19 +236,16 @@ with col_dl2:
                 st.session_state["_pdf_sig"] = _sig
                 st.session_state["_pdf_charged"] = False
 
-            def _charge_pdf():
-                if not st.session_state.get("_pdf_charged"):
-                    increment_quota(user_id, "pdf")
-                    log_activity(user_id, "pdf_export", doc_title)
-                    st.session_state["_pdf_charged"] = True
-
             st.download_button(
                 "⬇️ Télécharger",
                 data=st.session_state["_pdf_bytes"],
                 file_name=f"{doc_title}.pdf",
                 mime="application/pdf",
                 use_container_width=True, type="primary",
-                on_click=_charge_pdf,
+                on_click=lambda: (
+                    increment_quota(user_id, "pdf"),
+                    log_activity(user_id, "pdf_export", doc_title),
+                ),
             )
 
 st.markdown(
@@ -290,5 +290,6 @@ for col, (label, action) in zip(cols, ia_actions):
                         st.rerun()
                     except StudyBoostAIError as e:
                         show_ai_error(e, model_name.split(" (")[0], action)
-                    except Exception:
-                        show_ai_error(Exception("unknown"), model_name.split(" (")[0], action)
+                    except Exception as e:
+                        logger.warning("Erreur inattendue IA %s: %s", action, e)
+                        st.error("❌ Une erreur inattendue s'est produite. La transformation a peut-être réussi malgré tout.")

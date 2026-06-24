@@ -143,7 +143,7 @@ def main():
             "<li>📋 Colle ton cours pour des réponses ciblées</li>"
             "<li>🌐 Recherche web intégrée</li>"
             "<li>🤖 4 modèles IA au choix</li>"
-            "<li>💾 Historique sauvegardé 7 jours</li></ul>"
+            f"<li>💾 Historique sauvegardé {retention_days} jours</li></ul>"
             '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )

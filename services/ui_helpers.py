@@ -262,9 +262,13 @@ header {{ visibility: hidden; }}
 </style>""", unsafe_allow_html=True)
 
 
-def show_user_identity_sidebar():
+def show_user_identity_sidebar(retention_days: int | None = None):
     """Affiche la carte d'identité utilisateur dans la sidebar."""
     from services.identity import get_user_alias
+
+    if retention_days is None:
+        from services.database import get_settings
+        retention_days = int(get_settings().get("retention_days", "7"))
 
     alias = get_user_alias()
     user_data = st.session_state.get("user_data", {})
@@ -286,7 +290,7 @@ def show_user_identity_sidebar():
             {greeting}
         </div>
         <div style="font-size: 0.68rem; opacity: 0.75; margin-top: 0.2rem;">
-            🔒 Espace anonyme · 7 jours
+            🔒 Espace anonyme · {retention_days} jours
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -366,10 +370,6 @@ def show_ai_error(e: Exception, model_name: str, action: str):
 """)
     if st.button("🔄 Réessayer", key=f"retry_{action}"):
         st.rerun()
-
-
-def show_feature_disabled(feature_name: str):
-    st.info(f"⚙️ **{feature_name}** est temporairement indisponible. Reviens bientôt !")
 
 
 def quota_warning(remaining: int, limit: int, label: str) -> bool:

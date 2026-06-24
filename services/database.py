@@ -164,10 +164,6 @@ def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
     }
 
 
-def _quota_remaining(q: dict) -> int:
-    return max(0, q["limit"] - q["used"])
-
-
 def _quota_date_today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -210,7 +206,10 @@ def increment_quota(user_id: str, quota_type: str):
     except Exception as e:
         logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
 
-    get_user_quotas.clear()
+    try:
+        get_user_quotas.clear()
+    except Exception as e:
+        logger.warning("increment_quota: cache clear non bloquant échoué pour %s/%s", user_id, quota_type, exc_info=e)
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +245,7 @@ def save_chat_message(user_id: str, role: str, content: str):
         logger.info("Saved chat message for %s, role=%s, %d chars", user_id, role, len(content))
     except Exception as e:
         logger.error("save_chat_message: échec pour session %s", user_id, exc_info=e)
+    get_chat_history.clear()
 
 
 @st.cache_data(ttl=10)
@@ -442,14 +442,4 @@ def admin_get_stats(days: int = 7) -> dict:
     return stats
 
 
-# ---------------------------------------------------------------------------
-# Backward-compatible aliases (for pages not yet migrated)
-# ---------------------------------------------------------------------------
 
-def get_settings_compat(db=None) -> dict:
-    return get_settings()
-
-
-def use_quota_compat(db, session_id, quota_type):
-    increment_quota(session_id, quota_type)
-    return True

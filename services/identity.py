@@ -1,5 +1,5 @@
 """
-Gestion de l'identité anonyme persistante via cookie.
+Gestion de l'identité anonyme persistante via cookie + URL query param.
 Chaque utilisateur reçoit un alias mignon et garde son espace 7 jours.
 """
 import random
@@ -55,17 +55,32 @@ def get_cookie_controller():
     return _controller
 
 
+def _read_cookie_with_retry(controller, key="studyboost_session_id", retries=2, delay=0.15):
+    """Read cookie with retry to account for JS component mount time."""
+    for _ in range(retries):
+        val = controller.get(key)
+        if val:
+            return val
+        import time
+        time.sleep(delay)
+    return controller.get(key)
+
+
 def init_user_identity(db=None):
     controller = get_cookie_controller()
-    existing_token = controller.get("studyboost_session_id")
 
-    # On first run after F5, cookie controller JS may not have loaded yet.
-    # If no cookie and no user_data, rerun once to let component initialise.
-    if existing_token is None and "user_data" not in st.session_state:
-        if "_identity_retry" not in st.session_state:
-            st.session_state["_identity_retry"] = True
-            st.rerun()
-            return None
+    # 1) Try URL query param (fast, survives F5, no JS dependency)
+    existing_token = st.query_params.get("sid")
+
+    # 2) Fallback: try cookie with retry (async JS component mount)
+    if not existing_token:
+        existing_token = _read_cookie_with_retry(controller)
+
+    # 3) Final fallback: rerun once in case component wasn't ready at all
+    if not existing_token and "user_data" not in st.session_state and "_identity_retry" not in st.session_state:
+        st.session_state["_identity_retry"] = True
+        st.rerun()
+        return None
 
     if existing_token and "user_data" not in st.session_state and db:
         try:
@@ -116,10 +131,12 @@ def init_user_identity(db=None):
             except Exception as e:
                 logger.error("init_user_identity: échec création session Supabase pour %s", new_id[:8], exc_info=e)
 
+        # Persist in cookie AND URL query params (F5-safe)
         try:
             controller.set("studyboost_session_id", new_id, max_age=7 * 24 * 60 * 60)
         except Exception as e:
             logger.warning("init_user_identity: échec set cookie pour %s", new_id[:8], exc_info=e)
+        st.query_params["sid"] = new_id
 
         st.session_state["user_data"] = {
             "id": new_id,

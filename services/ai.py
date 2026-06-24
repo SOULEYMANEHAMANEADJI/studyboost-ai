@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 from typing import Literal
 
@@ -139,19 +138,6 @@ def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, 
                 time.sleep(1)
                 continue
             raise StudyBoostAIError("❌ Une erreur s'est produite. Réessaie dans quelques instants.", "unknown")
-
-
-_REPEAT_RE = re.compile(r"^(.)\1{10,}$")
-
-
-def validate_text(text: str) -> str | None:
-    """Validate text before AI call. Returns error message or None."""
-    stripped = text.strip()
-    if len(stripped) < 50:
-        return "📝 Ton texte est trop court (minimum 50 caractères) pour utiliser cette transformation."
-    if _REPEAT_RE.match(stripped):
-        return "📝 Le texte semble invalide. Ajoute un vrai contenu à transformer."
-    return None
 
 
 def format_text(

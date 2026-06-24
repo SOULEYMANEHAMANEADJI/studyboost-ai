@@ -10,6 +10,9 @@ from services.database import (
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.search import search_web, format_results
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
+from services.logger import get_logger
+
+logger = get_logger("chat")
 
 st.set_page_config(page_title="Chat - StudyBoost AI", page_icon="💬", layout="wide")
 
@@ -169,8 +172,9 @@ def main():
                     log_activity(user_id, "chat_search" if used_search_quota else "chat", prompt[:100])
                 except StudyBoostAIError as e:
                     show_ai_error(e, selected_model, "chat")
-                except Exception:
-                    show_ai_error(Exception("unknown"), selected_model, "chat")
+                except Exception as e:
+                    logger.warning("Erreur inattendue chat: %s", e)
+                    st.error("❌ Une erreur inattendue s'est produite.")
 
 
 if __name__ == "__main__":
