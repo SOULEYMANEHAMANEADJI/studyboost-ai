@@ -126,7 +126,7 @@ def main():
             "<li>🤖 Transformations IA (résumé, fiche, quiz)</li>"
             "<li>📄 Export PDF avec logo</li>"
             "<li>📥 Export Markdown illimité</li></ul>"
-            '<div style="margin-top:1.5rem;">',
+            '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
         if st.button("📝 Ouvrir l'éditeur", use_container_width=True, type="primary"):
@@ -144,7 +144,7 @@ def main():
             "<li>🌐 Recherche web intégrée</li>"
             "<li>🤖 4 modèles IA au choix</li>"
             "<li>💾 Historique sauvegardé 7 jours</li></ul>"
-            '<div style="margin-top:1.5rem;">',
+            '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
         if st.button("💬 Ouvrir le chat", use_container_width=True, type="primary"):
@@ -165,7 +165,7 @@ def main():
             "<li>💬 Propose des idées</li>"
             "<li>📧 Laisse ton email (optionnel)</li>"
             "</ul>"
-            '<div style="margin-top:1.5rem;">',
+            '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
         if st.button("💡 Donner mon avis", use_container_width=True, type="primary"):
