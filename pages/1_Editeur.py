@@ -231,7 +231,13 @@ with col_dl2:
                     neutral=not with_logo,
                 )
                 st.session_state["_pdf_sig"] = _sig
-                st.session_state["_pdf_counted"] = False
+                st.session_state["_pdf_charged"] = False
+
+            def _charge_pdf():
+                if not st.session_state.get("_pdf_charged"):
+                    increment_quota(user_id, "pdf")
+                    log_activity(user_id, "pdf_export", doc_title)
+                    st.session_state["_pdf_charged"] = True
 
             st.download_button(
                 "⬇️ Télécharger",
@@ -239,12 +245,8 @@ with col_dl2:
                 file_name=f"{doc_title}.pdf",
                 mime="application/pdf",
                 use_container_width=True, type="primary",
+                on_click=_charge_pdf,
             )
-
-            if not st.session_state.get("_pdf_counted"):
-                increment_quota(user_id, "pdf")
-                log_activity(user_id, "pdf_export", doc_title)
-                st.session_state["_pdf_counted"] = True
 
 st.markdown(
     '<div style="margin:30px 0 10px 0;border-top:1px solid #E2E8F0;padding-top:20px;"></div>',
@@ -266,10 +268,13 @@ ia_actions = [
     ("❓ Quiz", "quiz"),
 ]
 
+is_text_valid = len(editor_text.strip()) >= 50
+ia_tooltip = None if is_text_valid else "📝 Écris au moins 50 caractères pour utiliser l'IA"
+
 cols = st.columns(6)
 for col, (label, action) in zip(cols, ia_actions):
     with col:
-        if st.button(label, use_container_width=True, key=f"ia_{action}"):
+        if st.button(label, use_container_width=True, key=f"ia_{action}", disabled=not is_text_valid, help=ia_tooltip):
             if quotas and quotas["ai"]["used"] >= quotas["ai"]["limit"]:
                 st.error(f"❌ Limite IA atteinte ({quotas['ai']['limit']} transformations/jour). Reviens demain !")
             else:

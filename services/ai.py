@@ -159,10 +159,6 @@ def format_text(
     style: Literal["resume", "simplify", "fiche", "academic", "bullet_points", "quiz"],
     model: str = DEFAULT_MODEL,
 ) -> str:
-    err = validate_text(text)
-    if err:
-        raise StudyBoostAIError(err, "validation")
-
     system = "Tu es un assistant pédagogique expert. Tu réponds toujours en français avec un format Markdown propre et structuré."
     prompt = f"{STYLE_PROMPTS[style]}\n\n---\n\n{text}"
     result = _call_groq(
