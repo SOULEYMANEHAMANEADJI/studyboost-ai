@@ -349,9 +349,10 @@ def show_ai_error(e: Exception, model_name: str, action: str):
         "empty": "🤔 L'IA n'a pas généré de réponse. Reformule ton texte.",
         "validation": str(e),
         "auth": "🔑 Erreur d'authentification. Contacte le support.",
+        "unknown": "❌ Une erreur s'est produite. Réessaie dans quelques instants.",
     }
 
-    msg = _messages.get(code, str(e) if str(e) else "❌ Une erreur s'est produite.")
+    msg = _messages.get(code, "❌ Une erreur s'est produite.")
 
     st.error(f"""
 ❌ Erreur avec {model_name}
