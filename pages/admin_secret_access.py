@@ -172,6 +172,19 @@ def main():
                 st.success("Effacé.")
 
         st.markdown("---")
+        st.markdown("### 🗑️ Rétention des données")
+        current_retention = int(settings.get("retention_days", "7"))
+        retention = st.select_slider(
+            "Durée de rétention des données utilisateur",
+            options=[3, 7, 14, 30],
+            value=current_retention,
+            format_func=lambda x: f"{x} jours",
+        )
+        if retention != current_retention:
+            update_setting("retention_days", retention)
+            st.success(f"Rétention mise à jour : {retention} jours")
+
+        st.markdown("---")
         st.markdown("### 🧹 Nettoyage")
         if st.button("🧹 Nettoyer maintenant", use_container_width=True, type="primary"):
             with st.spinner("Nettoyage…"):

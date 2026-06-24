@@ -23,6 +23,7 @@ def main():
     db = get_db()
     settings = get_settings()
     user = init_user_identity(db)
+    retention_days = settings.get("retention_days", "7")
 
     if random.randint(1, 100) == 1:
         cleanup_old_data()
@@ -30,9 +31,8 @@ def main():
     dark_mode = st.session_state.get("dark_mode", False)
     inject_css(dark_mode=dark_mode)
 
-    if settings.get("maintenance_mode") == "true":
-        st.error("🔧 Application en maintenance. Revenez bientôt !")
-        st.stop()
+    if settings.get("maintenance_mode", "false") == "true":
+        st.warning("🔧 **Maintenance en cours** — certaines fonctionnalités peuvent être indisponibles. Reviens bientôt !")
 
     msg = settings.get("global_message", "")
     if msg:
@@ -45,7 +45,7 @@ def main():
             st.caption("👋 Bon retour parmi nous !")
         else:
             st.caption("🎉 Bienvenue !")
-        st.caption("Ton espace est conservé 7 jours")
+        st.caption(f"Ton espace est conservé {retention_days} jours")
         st.markdown("---")
 
         dark_new = st.toggle("🌙 Mode nuit", value=dark_mode)
@@ -125,11 +125,14 @@ def main():
             "<li>👁️ Preview à droite</li>"
             "<li>🤖 Transformations IA (résumé, fiche, quiz)</li>"
             "<li>📄 Export PDF avec logo</li>"
-            "<li>📥 Export Markdown illimité</li></ul></div>",
+            "<li>📥 Export Markdown illimité</li></ul>"
+            '<div style="margin-top:1.5rem;">',
             unsafe_allow_html=True,
         )
         if st.button("📝 Ouvrir l'éditeur", use_container_width=True, type="primary"):
             st.switch_page("pages/1_Editeur.py")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
     with col_b:
         st.markdown(
@@ -140,28 +143,48 @@ def main():
             "<li>📋 Colle ton cours pour des réponses ciblées</li>"
             "<li>🌐 Recherche web intégrée</li>"
             "<li>🤖 4 modèles IA au choix</li>"
-            "<li>💾 Historique sauvegardé 7 jours</li></ul></div>",
+            "<li>💾 Historique sauvegardé 7 jours</li></ul>"
+            '<div style="margin-top:1.5rem;">',
             unsafe_allow_html=True,
         )
         if st.button("💬 Ouvrir le chat", use_container_width=True, type="primary"):
             st.switch_page("pages/2_Chat.py")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(
-        '<div class="privacy-box">'
-        '<div style="font-weight:700;color:#166534;margin-bottom:0.5rem;">🔒 Tes données sont protégées</div>'
-        '<div class="privacy-item">✅ Aucun compte requis — accès direct</div>'
-        '<div class="privacy-item">🆔 Identité anonyme (alias mignon)</div>'
-        '<div class="privacy-item">🗑️ Toutes tes données sont supprimées après 7 jours</div>'
-        '<div class="privacy-item">🚫 Zéro publicité · Zéro revente de données</div>'
-        '<div class="privacy-item">💡 Tes feedbacks nous aident à améliorer l\'app</div></div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div style="margin:2rem 0;"></div>', unsafe_allow_html=True)
 
-    col_f1, col_f2, col_f3 = st.columns([1, 2, 1])
-    with col_f2:
-        if st.button("💡 Laisser mon avis", use_container_width=True):
+    col_fb1, col_fb2 = st.columns(2)
+    with col_fb1:
+        st.markdown(
+            '<div class="card" style="height:100%;">'
+            '<h3>💡 Laisser mon avis</h3>'
+            "<p>Partage ton expérience et aide-nous à améliorer StudyBoost AI</p>"
+            "<ul>"
+            "<li>⭐ Note l'application</li>"
+            "<li>💬 Propose des idées</li>"
+            "<li>📧 Laisse ton email (optionnel)</li>"
+            "</ul>"
+            '<div style="margin-top:1.5rem;">',
+            unsafe_allow_html=True,
+        )
+        if st.button("💡 Donner mon avis", use_container_width=True, type="primary"):
             st.switch_page("pages/3_Feedback.py")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    with col_fb2:
+        st.markdown(
+            '<div class="card" style="height:100%;">'
+            '<h3>🔒 Tes données sont protégées</h3>'
+            "<ul>"
+            "<li>✅ Aucun compte requis — accès direct</li>"
+            "<li>🆔 Identité anonyme (alias mignon)</li>"
+            f"<li>🗑️ Données supprimées après {retention_days} jours</li>"
+            "<li>🚫 Zéro publicité · Zéro revente</li>"
+            "<li>💡 Les feedbacks améliorent l'app</li>"
+            "</ul></div>",
+            unsafe_allow_html=True,
+        )
 
 
 if __name__ == "__main__":

@@ -55,6 +55,7 @@ DEFAULT_SETTINGS = {
     "quota_search_per_day": "10",
     "quota_ai_per_day": "15",
     "global_message": "",
+    "retention_days": "7",
 }
 
 
@@ -242,6 +243,7 @@ def save_chat_message(user_id: str, role: str, content: str):
             "content": content[:5000],
             "created_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
+        logger.info("Saved chat message for %s, role=%s, %d chars", user_id, role, len(content))
     except Exception as e:
         logger.error("save_chat_message: échec pour session %s", user_id, exc_info=e)
 
@@ -257,7 +259,9 @@ def get_chat_history(user_id: str) -> list:
             .order("created_at")
             .execute()
         )
-        return result.data or []
+        msgs = result.data or []
+        logger.info("Fetched %d chat messages for %s", len(msgs), user_id)
+        return msgs
     except Exception as e:
         logger.error("get_chat_history: échec pour session %s", user_id, exc_info=e)
         return []
@@ -284,6 +288,7 @@ def save_draft(user_id: str, text: str, model: str | None = None):
         update["preferred_model"] = model
     try:
         db.table(tbl).update(update).eq("id", user_id).execute()
+        logger.info("Saved draft for %s, %d chars, model=%s", user_id, len(text), model or "none")
     except Exception as e:
         logger.warning("save_draft: échec pour %s", user_id, exc_info=e)
     load_draft.clear()
@@ -297,7 +302,10 @@ def load_draft(user_id: str) -> tuple:
         row = db.table(tbl).select("draft_text, preferred_model").eq("id", user_id).execute()
         if row.data:
             r = row.data[0]
-            return (r.get("draft_text") or "", r.get("preferred_model") or "")
+            txt = r.get("draft_text") or ""
+            mod = r.get("preferred_model") or ""
+            logger.info("Loaded draft for %s, %d chars", user_id, len(txt))
+            return (txt, mod)
     except Exception as e:
         logger.warning("load_draft: échec pour %s", user_id, exc_info=e)
     return ("", "")
@@ -336,8 +344,10 @@ def cleanup_old_data():
     if settings.get("auto_cleanup_enabled", "true") != "true":
         return
 
+    days = int(settings.get("retention_days", "7"))
     db = get_db()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    logger.info("cleanup_old_data: suppression données antérieures à %d jours (%s)", days, cutoff)
 
     try:
         db.table("chat_history").delete().lt("created_at", cutoff).execute()

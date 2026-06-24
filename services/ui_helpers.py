@@ -338,6 +338,35 @@ def show_quota_sidebar(quotas: dict | None = None):
     """, unsafe_allow_html=True)
 
 
+def show_ai_error(e: Exception, model_name: str, action: str):
+    from services.ai import StudyBoostAIError
+    code = getattr(e, "code", "unknown") if isinstance(e, StudyBoostAIError) else "unknown"
+
+    _messages = {
+        "timeout": "⏱️ Le modèle a mis trop de temps. Essaie un modèle plus rapide (Llama 8B).",
+        "rate_limit": "⏳ Trop de demandes. Attends 30 secondes.",
+        "network": "📡 Vérifie ta connexion internet.",
+        "empty": "🤔 L'IA n'a pas généré de réponse. Reformule ton texte.",
+        "validation": str(e),
+        "auth": "🔑 Erreur d'authentification. Contacte le support.",
+    }
+
+    msg = _messages.get(code, str(e) if str(e) else "❌ Une erreur s'est produite.")
+
+    st.error(f"""
+❌ Erreur avec {model_name}
+
+{msg}
+
+💡 **Solutions :**
+- Réessaie dans quelques secondes
+- Change de modèle dans la sidebar (Llama 70B, Gemma, Mixtral)
+- Réduis la taille du texte
+""")
+    if st.button("🔄 Réessayer", key=f"retry_{action}"):
+        st.rerun()
+
+
 def show_feature_disabled(feature_name: str):
     st.info(f"⚙️ **{feature_name}** est temporairement indisponible. Reviens bientôt !")
 

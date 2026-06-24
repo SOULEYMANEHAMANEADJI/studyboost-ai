@@ -9,7 +9,7 @@ from services.database import (
 )
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.search import search_web, format_results
-from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
+from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
 
 st.set_page_config(page_title="Chat - StudyBoost AI", page_icon="💬", layout="wide")
 
@@ -31,6 +31,11 @@ def main():
     init_user_identity(db)
     settings = get_settings()
     user_id = get_user_id()
+
+    if settings.get("maintenance_mode", "false") == "true":
+        st.error("🔧 **Maintenance en cours** — Le chat est temporairement indisponible.")
+        st.markdown("[🏠 Retour à l'accueil](/)")
+        st.stop()
 
     chat_enabled = settings.get("feature_chat_enabled", "true").lower() == "true"
     search_enabled = settings.get("feature_search_enabled", "true").lower() == "true"
@@ -163,9 +168,9 @@ def main():
                     save_chat_message(user_id, "assistant", response)
                     log_activity(user_id, "chat_search" if used_search_quota else "chat", prompt[:100])
                 except StudyBoostAIError as e:
-                    st.error(f"❌ {e}")
+                    show_ai_error(e, selected_model, "chat")
                 except Exception:
-                    st.error("❌ Une erreur s'est produite. Réessaie dans quelques instants.")
+                    show_ai_error(Exception("unknown"), selected_model, "chat")
 
 
 if __name__ == "__main__":

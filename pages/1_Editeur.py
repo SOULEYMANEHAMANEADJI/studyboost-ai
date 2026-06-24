@@ -9,7 +9,7 @@ from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
-from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
+from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
 
 
 def _render_markdown_html(text: str) -> str:
@@ -51,6 +51,11 @@ db = get_db()
 init_user_identity(db)
 settings = get_settings()
 user_id = get_user_id()
+
+if settings.get("maintenance_mode", "false") == "true":
+    st.error("🔧 **Maintenance en cours** — L'éditeur est temporairement indisponible.")
+    st.markdown("[🏠 Retour à l'accueil](/)")
+    st.stop()
 
 dark_mode = st.session_state.get("dark_mode", False)
 inject_css(dark_mode=dark_mode)
@@ -111,7 +116,7 @@ with col_name:
 with col_download:
     download_format = st.selectbox(
         "Format",
-        ["📥 Télécharger en .MD", "📄 Télécharger en .PDF"],
+        ["📥 .MD", "📄 .PDF"],
         label_visibility="collapsed", key="download_format",
     )
 
@@ -194,10 +199,10 @@ st.markdown('<div style="margin:20px 0;"></div>', unsafe_allow_html=True)
 
 col_dl1, col_dl2, col_dl3 = st.columns([1, 2, 1])
 with col_dl2:
-    if download_format == "📥 Télécharger en .MD":
+    if download_format == "📥 .MD":
         if settings.get("feature_md_enabled", "true") == "true":
             st.download_button(
-                "📥 Télécharger en Markdown",
+                "⬇️ Télécharger",
                 data=editor_text.encode("utf-8"),
                 file_name=f"{doc_title}.md",
                 mime="text/markdown",
@@ -216,32 +221,30 @@ with col_dl2:
                 index=0, horizontal=True, label_visibility="collapsed",
                 key="pdf_logo_choice",
             )
-            if st.button("📄 Générer et télécharger le PDF", use_container_width=True, type="primary"):
-                with st.spinner("📄 Génération du PDF..."):
-                    start = time.time()
-                    try:
-                        with_logo = logo_choice == "Avec logo"
-                        pdf_bytes = markdown_to_pdf(
-                            text=editor_text, title=doc_title,
-                            logo_path="assets/logo.png" if with_logo else None,
-                            neutral=not with_logo,
-                        )
-                        elapsed = time.time() - start
-                        increment_quota(user_id, "pdf")
-                        log_activity(user_id, "pdf_export", doc_title)
-                        st.session_state["pdf_bytes"] = pdf_bytes
-                        st.session_state["pdf_title"] = doc_title
-                        st.success(f"✅ PDF généré en {elapsed:.1f}s")
-                    except Exception:
-                        st.error("❌ Erreur lors de la génération du PDF. Vérifie que le contenu est valide.")
+            with_logo = logo_choice == "Avec logo"
 
-            if st.session_state.get("pdf_bytes"):
-                st.download_button(
-                    "⬇️ Télécharger le PDF",
-                    data=st.session_state["pdf_bytes"],
-                    file_name=f"{st.session_state.get('pdf_title', 'document')}.pdf",
-                    mime="application/pdf", use_container_width=True,
+            _sig = f"{editor_text[-100:]}_{doc_title}_{with_logo}"
+            if st.session_state.get("_pdf_sig") != _sig:
+                st.session_state["_pdf_bytes"] = markdown_to_pdf(
+                    text=editor_text, title=doc_title,
+                    logo_path="assets/logo.png" if with_logo else None,
+                    neutral=not with_logo,
                 )
+                st.session_state["_pdf_sig"] = _sig
+                st.session_state["_pdf_counted"] = False
+
+            st.download_button(
+                "⬇️ Télécharger",
+                data=st.session_state["_pdf_bytes"],
+                file_name=f"{doc_title}.pdf",
+                mime="application/pdf",
+                use_container_width=True, type="primary",
+            )
+
+            if not st.session_state.get("_pdf_counted"):
+                increment_quota(user_id, "pdf")
+                log_activity(user_id, "pdf_export", doc_title)
+                st.session_state["_pdf_counted"] = True
 
 st.markdown(
     '<div style="margin:30px 0 10px 0;border-top:1px solid #E2E8F0;padding-top:20px;"></div>',
@@ -281,6 +284,6 @@ for col, (label, action) in zip(cols, ia_actions):
                         st.success(f"✅ {label} terminé en {elapsed:.1f}s")
                         st.rerun()
                     except StudyBoostAIError as e:
-                        st.error(f"❌ {e}")
+                        show_ai_error(e, model_name.split(" (")[0], action)
                     except Exception:
-                        st.error("❌ Une erreur s'est produite. Réessaie dans quelques instants.")
+                        show_ai_error(Exception("unknown"), model_name.split(" (")[0], action)
