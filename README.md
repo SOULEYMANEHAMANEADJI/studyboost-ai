@@ -7,7 +7,7 @@ Transforme tes cours en fiches de révision, résumés et quiz avec l'intelligen
 - **📝 Éditeur de révision** — Résume, simplifie, crée des fiches et quiz
 - **💬 Chat avec ton cours** — Pose des questions et obtiens des réponses contextualisées
 - **🔍 Recherche web** — Synthèse IA des résultats web
-- **📥 Export PDF/Markdown** — Télécharge tes fiches
+- **📥 Export PDF/Markdown** — Télécharge tes fiches (supporte emojis 🎓, accents français, markdown)
 - **🔒 100% anonyme** — Aucune inscription requise
 - **🗑️ Nettoyage automatique** — Données supprimées après 7 jours
 
@@ -27,7 +27,7 @@ streamlit run app.py
 - **IA** : Groq (Llama 3.1 8B)
 - **Base de données** : Supabase (PostgreSQL)
 - **Recherche web** : DuckDuckGo
-- **PDF** : ReportLab
+- **PDF** : ReportLab (Noto Sans + Noto Emoji pour support Unicode complet)
 
 ## Configuration
 
