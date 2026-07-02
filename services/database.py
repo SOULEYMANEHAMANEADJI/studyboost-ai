@@ -361,7 +361,10 @@ def cleanup_old_data(force: bool = False):
         logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
 
     if force:
-        db.table("admin_settings").upsert({"key": "last_cleanup", "value": datetime.now(timezone.utc).isoformat()}).execute()
+        try:
+            db.table("admin_settings").upsert({"key": "last_cleanup", "value": datetime.now(timezone.utc).isoformat()}).execute()
+        except Exception as e:
+            logger.warning("cleanup_old_data: échec enregistrement last_cleanup", exc_info=e)
 
 
 # ---------------------------------------------------------------------------
