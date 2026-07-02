@@ -76,12 +76,6 @@ def init_user_identity(db=None):
     if not existing_token:
         existing_token = _read_cookie_with_retry(controller)
 
-    # 3) Final fallback: rerun once in case component wasn't ready at all
-    if not existing_token and "user_data" not in st.session_state and "_identity_retry" not in st.session_state:
-        st.session_state["_identity_retry"] = True
-        st.rerun()
-        return None
-
     if existing_token and "user_data" not in st.session_state and db:
         try:
             result = db.table("sessions").select("*").eq("id", existing_token).execute()

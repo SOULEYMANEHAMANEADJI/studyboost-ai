@@ -105,15 +105,13 @@ def main():
     )
 
     if "messages" not in st.session_state or st.session_state.get("last_user_id") != user_id:
-        if st.session_state.get("last_user_id") and st.session_state["last_user_id"] != user_id:
-            get_chat_history.clear()
         history = get_chat_history(user_id)
         st.session_state["messages"] = [
             {"role": msg["role"], "content": msg["content"]}
             for msg in (history or [])
         ]
         st.session_state["last_user_id"] = user_id
-        if not st.session_state["messages"]:
+        if not st.session_state["messages"] and "user_data" in st.session_state:
             welcome = (
                 "Bonjour ! 👋 Je suis **StudyBoost AI**. "
                 "Colle ton cours dans la barre latérale ou pose-moi directement une question !"

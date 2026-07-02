@@ -89,14 +89,18 @@ INSERT INTO public.admin_settings (key, value) VALUES
   ('quota_ai_per_day', '15')
 ON CONFLICT (key) DO NOTHING;
 
--- 7. Ajouter RLS (optionnel mais recommandé)
+-- 7. Ajouter RLS (recommandé pour sécurité au niveau DB)
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chat_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.feedbacks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_settings ENABLE ROW LEVEL SECURITY;
 
--- 8. Politiques RLS : autoriser l'accès anonyme (via anon key)
+-- 8. Politiques RLS : accès via anon key
+-- NOTE : la clé anon est UNIQUE pour tous les utilisateurs anonymes,
+-- donc RLS ne peut pas isoler par session_id ici.
+-- L'isolation est FAITE DANS LE CODE PYTHON (backend) via .eq("session_id", user_id).
+-- Pour une isolation RLS complète, migrer vers Supabase Auth (sign-up anonyme).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow anonymous access' AND tablename = 'sessions') THEN

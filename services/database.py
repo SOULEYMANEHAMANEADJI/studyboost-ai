@@ -245,10 +245,8 @@ def save_chat_message(user_id: str, role: str, content: str):
         logger.info("Saved chat message for %s, role=%s, %d chars", user_id, role, len(content))
     except Exception as e:
         logger.error("save_chat_message: échec pour session %s", user_id, exc_info=e)
-    get_chat_history.clear()
 
 
-@st.cache_data(ttl=10)
 def get_chat_history(user_id: str) -> list:
     db = get_db()
     try:
@@ -273,7 +271,6 @@ def clear_chat_history(user_id: str):
         db.table("chat_history").delete().eq("session_id", user_id).execute()
     except Exception as e:
         logger.warning("clear_chat_history: échec pour session %s", user_id, exc_info=e)
-    get_chat_history.clear()
 
 
 # ---------------------------------------------------------------------------
