@@ -2,6 +2,8 @@
 import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
+
+VERSION = "11"
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, chat_response, chat_with_search
 from services.database import (
     get_db, get_settings, log_activity, save_chat_message,
@@ -173,6 +175,12 @@ def main():
                 except Exception as e:
                     logger.warning("Erreur inattendue chat: %s", e)
                     st.error("❌ Une erreur inattendue s'est produite.")
+
+    st.markdown(
+        f'<div style="text-align:center;color:#94A3B8;font-size:0.75rem;margin-top:2rem;">'
+        f'v{VERSION} · StudyBoost AI</div>',
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":

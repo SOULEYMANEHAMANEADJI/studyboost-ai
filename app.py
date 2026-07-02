@@ -1,11 +1,13 @@
 """StudyBoost AI — Page d'accueil avec identité persistante."""
 import os
-import random
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 import streamlit as st
 
 load_dotenv()
+
+VERSION = "11"
 
 st.set_page_config(
     page_title="StudyBoost AI",
@@ -16,7 +18,27 @@ st.set_page_config(
 
 from services.database import get_db, get_settings, get_user_quotas, cleanup_old_data
 from services.identity import init_user_identity, get_user_alias, logout, is_admin
+from services.logger import get_logger
 from services.ui_helpers import inject_css, show_quota_sidebar
+
+
+def _maybe_cleanup():
+    db = get_db()
+    try:
+        row = db.table("admin_settings").select("value").eq("key", "last_cleanup").execute()
+        last = row.data[0]["value"] if row.data else None
+    except Exception:
+        last = None
+
+    if last:
+        try:
+            dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - dt) < timedelta(hours=6):
+                return
+        except Exception:
+            pass
+
+    cleanup_old_data(force=True)
 
 
 def main():
@@ -25,8 +47,7 @@ def main():
     user = init_user_identity(db)
     retention_days = settings.get("retention_days", "7")
 
-    if random.randint(1, 100) == 1:
-        cleanup_old_data()
+    _maybe_cleanup()
 
     dark_mode = st.session_state.get("dark_mode", False)
     inject_css(dark_mode=dark_mode)
@@ -86,6 +107,11 @@ def main():
     )
     st.markdown(
         '<div style="text-align:center;"><span class="badge">BETA</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="text-align:center;color:#94A3B8;font-size:0.75rem;margin-bottom:0.5rem;">'
+        f'v{VERSION} · StudyBoost AI</div>',
         unsafe_allow_html=True,
     )
     st.markdown("<br>", unsafe_allow_html=True)

@@ -113,7 +113,6 @@ def _table() -> str:
         return "anonymous_sessions"
 
 
-@st.cache_data(ttl=30)
 def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
     db = get_db()
     settings = get_settings()
@@ -205,11 +204,6 @@ def increment_quota(user_id: str, quota_type: str):
             }).eq("id", user_id).execute()
     except Exception as e:
         logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
-
-    try:
-        get_user_quotas.clear()
-    except Exception as e:
-        logger.warning("increment_quota: cache clear non bloquant échoué pour %s/%s", user_id, quota_type, exc_info=e)
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +330,7 @@ def save_feedback(user_id: str, rating: int, comment: str, feature_request: str,
 # Cleanup
 # ---------------------------------------------------------------------------
 
-def cleanup_old_data():
+def cleanup_old_data(force: bool = False):
     settings = get_settings()
     if settings.get("auto_cleanup_enabled", "true") != "true":
         return
@@ -352,9 +346,22 @@ def cleanup_old_data():
         logger.warning("cleanup_old_data: échec nettoyage chat_history", exc_info=e)
 
     try:
+        db.table("activity_logs").delete().lt("created_at", cutoff).execute()
+    except Exception as e:
+        logger.warning("cleanup_old_data: échec nettoyage activity_logs", exc_info=e)
+
+    try:
+        db.table("feedbacks").delete().lt("created_at", cutoff).execute()
+    except Exception as e:
+        logger.warning("cleanup_old_data: échec nettoyage feedbacks", exc_info=e)
+
+    try:
         db.table("sessions").delete().lt("last_active", cutoff).execute()
     except Exception as e:
         logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
+
+    if force:
+        db.table("admin_settings").upsert({"key": "last_cleanup", "value": datetime.now(timezone.utc).isoformat()}).execute()
 
 
 # ---------------------------------------------------------------------------

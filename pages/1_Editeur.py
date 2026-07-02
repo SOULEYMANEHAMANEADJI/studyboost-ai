@@ -5,6 +5,8 @@ Layout : éditeur à gauche + preview à droite.
 import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
+
+VERSION = "11"
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.logger import get_logger
 
@@ -293,3 +295,9 @@ for col, (label, action) in zip(cols, ia_actions):
                     except Exception as e:
                         logger.warning("Erreur inattendue IA %s: %s", action, e)
                         st.error("❌ Une erreur inattendue s'est produite. La transformation a peut-être réussi malgré tout.")
+
+st.markdown(
+    f'<div style="text-align:center;color:#94A3B8;font-size:0.75rem;margin-top:1rem;padding-bottom:1rem;">'
+    f'v{VERSION} · StudyBoost AI</div>',
+    unsafe_allow_html=True,
+)
