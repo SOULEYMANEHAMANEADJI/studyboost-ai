@@ -69,12 +69,14 @@ def _read_cookie_with_retry(controller, key="studyboost_session_id", retries=2, 
 def init_user_identity(db=None):
     controller = get_cookie_controller()
 
-    # 1) Try URL query param (fast, survives F5, no JS dependency)
-    existing_token = st.query_params.get("sid")
+    # 1) Cookie d'abord (per-browser, sécurisé)
+    existing_token = _read_cookie_with_retry(controller)
 
-    # 2) Fallback: try cookie with retry (async JS component mount)
+    # 2) Fallback URL param (F5/first load quand JS cookie pas encore monté)
     if not existing_token:
-        existing_token = _read_cookie_with_retry(controller)
+        sid_from_url = st.query_params.get("sid")
+        if sid_from_url:
+            existing_token = sid_from_url
 
     if existing_token and "user_data" not in st.session_state and db:
         try:
@@ -98,6 +100,15 @@ def init_user_identity(db=None):
                         },
                         "is_returning": True,
                     }
+                    # Transférer l'identité dans le cookie et nettoyer l'URL
+                    try:
+                        controller.set("studyboost_session_id", session["id"], max_age=7 * 24 * 60 * 60)
+                    except Exception:
+                        pass
+                    try:
+                        del st.query_params["sid"]
+                    except Exception:
+                        pass
                     return st.session_state["user_data"]
         except Exception as e:
             logger.warning("init_user_identity: échec validation session cookie %s", existing_token[:8], exc_info=e)
@@ -125,12 +136,11 @@ def init_user_identity(db=None):
             except Exception as e:
                 logger.error("init_user_identity: échec création session Supabase pour %s", new_id[:8], exc_info=e)
 
-        # Persist in cookie AND URL query params (F5-safe)
+        # Cookie uniquement (pas de sid dans l'URL pour éviter le partage)
         try:
             controller.set("studyboost_session_id", new_id, max_age=7 * 24 * 60 * 60)
         except Exception as e:
             logger.warning("init_user_identity: échec set cookie pour %s", new_id[:8], exc_info=e)
-        st.query_params["sid"] = new_id
 
         st.session_state["user_data"] = {
             "id": new_id,
