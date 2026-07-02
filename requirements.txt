@@ -7,4 +7,4 @@ markdown==3.7
 plotly==5.23.0
 pandas==2.2.2
 python-dotenv==1.0.1
-streamlit-cookies-controller==0.0.4
+
