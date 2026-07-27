@@ -3,7 +3,7 @@ import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 
-VERSION = "11"
+from version import VERSION
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, chat_response, chat_with_search
 from services.database import (
     get_db, get_settings, log_activity, save_chat_message,

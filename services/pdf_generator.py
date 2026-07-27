@@ -2,6 +2,8 @@
 Générateur PDF professionnel avec reportlab.
 Supporte UTF-8 (français, emojis) et Markdown.
 """
+from __future__ import annotations
+
 import os
 import re
 from io import BytesIO

@@ -2,11 +2,12 @@
 Éditeur Markdown avec preview en temps réel.
 Layout : éditeur à gauche + preview à droite.
 """
+import hashlib
 import time
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
 
-VERSION = "11"
+from version import VERSION
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.logger import get_logger
 
@@ -228,13 +229,14 @@ with col_dl2:
             )
             with_logo = logo_choice == "Avec logo"
 
-            _sig = f"{editor_text[-100:]}_{doc_title}_{with_logo}"
+            _sig = f"{hashlib.md5(editor_text.encode()).hexdigest()}_{doc_title}_{with_logo}"
             if st.session_state.get("_pdf_sig") != _sig:
-                st.session_state["_pdf_bytes"] = markdown_to_pdf(
-                    text=editor_text, title=doc_title,
-                    logo_path="assets/logo.png" if with_logo else None,
-                    neutral=not with_logo,
-                )
+                with st.spinner("📄 Génération du PDF..."):
+                    st.session_state["_pdf_bytes"] = markdown_to_pdf(
+                        text=editor_text, title=doc_title,
+                        logo_path="assets/logo.png" if with_logo else None,
+                        neutral=not with_logo,
+                    )
                 st.session_state["_pdf_sig"] = _sig
                 st.session_state["_pdf_charged"] = False
 

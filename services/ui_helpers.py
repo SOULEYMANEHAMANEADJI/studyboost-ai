@@ -2,6 +2,8 @@
 Helpers UI : CSS global + mode nuit cohérent.
 Utilise des variables CSS pour une gestion centralisée du thème.
 """
+from __future__ import annotations
+
 import streamlit as st
 
 
@@ -194,11 +196,11 @@ header {{ visibility: hidden; }}
 
 /* Privacy box */
 .privacy-box {{
-    background: #F0FDF4;
-    border: 1.5px solid #86EFAC;
+    background: var(--card-bg) !important;
+    border: 1.5px solid var(--border) !important;
     border-radius: 16px;
     padding: 1.5rem;
-    color: #166534;
+    color: var(--text-main) !important;
 }}
 
 /* Fade-in animation */
@@ -364,31 +366,8 @@ def show_ai_error(e: Exception, model_name: str, action: str):
 
 💡 **Solutions :**
 - Réessaie dans quelques secondes
-- Change de modèle dans la sidebar (Llama 70B, Gemma, Mixtral)
+- Change de modèle dans la sidebar (Llama 3.1 8B, Llama 3.3 70B, Llama 4 Scout, Qwen 3 32B)
 - Réduis la taille du texte
 """)
     if st.button("🔄 Réessayer", key=f"retry_{action}"):
         st.rerun()
-
-
-def quota_warning(remaining: int, limit: int, label: str) -> bool:
-    if remaining <= 0:
-        st.error(f"❌ Limite de **{label}** atteinte ({limit}/{limit}). Reviens demain !")
-        return False
-    if remaining <= 3:
-        st.warning(f"⚠️ Plus que **{remaining}** {label} aujourd'hui")
-    return True
-
-
-def apply_dark_mode() -> bool:
-    if "dark_mode" not in st.session_state:
-        st.session_state["dark_mode"] = False
-
-    current = st.session_state["dark_mode"]
-    new_value = st.toggle("🌙 Mode nuit", value=current, key="dark_mode_global")
-
-    if new_value != current:
-        st.session_state["dark_mode"] = new_value
-        st.rerun()
-
-    return new_value

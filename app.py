@@ -7,7 +7,7 @@ import streamlit as st
 
 load_dotenv()
 
-VERSION = "11"
+from version import VERSION
 
 st.set_page_config(
     page_title="StudyBoost AI",
@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 from services.database import get_db, get_settings, get_user_quotas, cleanup_old_data
-from services.identity import init_user_identity, get_user_alias, logout, is_admin
+from services.identity import init_user_identity, logout, is_admin
 from services.ui_helpers import inject_css, show_quota_sidebar
 
 

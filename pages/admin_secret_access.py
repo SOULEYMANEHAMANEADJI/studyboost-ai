@@ -1,5 +1,8 @@
 """Admin Dashboard — accès par URL directe uniquement."""
+import hashlib
+import hmac
 import os
+import time
 
 from dotenv import load_dotenv; load_dotenv()
 import pandas as pd
@@ -10,7 +13,7 @@ from services.ai import AVAILABLE_MODELS
 from services.database import (
     get_db, get_settings, update_setting, admin_get_stats, cleanup_old_data, log_activity,
 )
-from services.identity import get_user_id
+from services.identity import get_user_id, init_user_identity
 from services.ui_helpers import inject_css
 
 st.set_page_config(page_title="Admin", page_icon="🔧")
@@ -18,6 +21,13 @@ st.markdown(
     """<style>[data-testid="stSidebarNav"] a[href*="admin"] {display: none !important;}</style>""",
     unsafe_allow_html=True,
 )
+
+MAX_ATTEMPTS = 5
+LOCKOUT_SECONDS = 300
+
+
+def _hash_password(pwd: str) -> str:
+    return hashlib.sha256(pwd.encode("utf-8")).hexdigest()
 
 
 def _check_password():
@@ -28,15 +38,36 @@ def _check_password():
     except Exception:
         pw = os.environ.get("ADMIN_PASSWORD", "")
 
+    attempts = st.session_state.get("admin_attempts", 0)
+    locked_until = st.session_state.get("admin_locked_until", 0)
+    now = time.time()
+
+    if attempts >= MAX_ATTEMPTS and now < locked_until:
+        remaining = int(locked_until - now)
+        st.error(f"🔒 Trop de tentatives. Réessaie dans {remaining}s.")
+        return False
+    elif attempts >= MAX_ATTEMPTS and now >= locked_until:
+        st.session_state["admin_attempts"] = 0
+
     with st.form("admin_login"):
         st.markdown("### 🔐 Accès administrateur")
         pwd = st.text_input("Mot de passe", type="password")
         if st.form_submit_button("Connexion", use_container_width=True, type="primary"):
-            if pwd == pw:
+            if not pwd:
+                st.error("Mot de passe vide.")
+            elif hmac.compare_digest(_hash_password(pwd), _hash_password(pw)):
                 st.session_state["admin_auth"] = True
+                st.session_state["admin_attempts"] = 0
                 st.rerun()
             else:
-                st.error("Mot de passe incorrect.")
+                attempts += 1
+                st.session_state["admin_attempts"] = attempts
+                if attempts >= MAX_ATTEMPTS:
+                    st.session_state["admin_locked_until"] = now + LOCKOUT_SECONDS
+                    st.error("🔒 Trop de tentatives. Verrouillé 5 minutes.")
+                else:
+                    remaining = MAX_ATTEMPTS - attempts
+                    st.error(f"Mot de passe incorrect. ({remaining} tentatives restantes)")
     return False
 
 
@@ -47,6 +78,7 @@ def main():
         st.stop()
 
     settings = get_settings()
+    init_user_identity(db)
     user_id = get_user_id()
     period = st.sidebar.selectbox("📊 Période", [7, 14, 30], index=0)
     stats = admin_get_stats(days=period)

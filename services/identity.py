@@ -3,6 +3,8 @@ Gestion de l'identité anonyme persistante via st.session_state + URL.
 Chaque onglet/navigateur reçoit SA propre identité.
 Pas de cookies (partagés entre onglets d'un même navigateur).
 """
+from __future__ import annotations
+
 import random
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -117,7 +119,7 @@ def init_user_identity(db=None):
 def get_user_id() -> str:
     if "user_data" in st.session_state:
         return st.session_state["user_data"]["id"]
-    return str(uuid.uuid4())
+    raise RuntimeError("get_user_id() appelé sans init_user_identity() — appelle init_user_identity(db) en premier.")
 
 
 def get_user_alias() -> dict:
