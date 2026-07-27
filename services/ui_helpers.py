@@ -45,7 +45,6 @@ def inject_css(dark_mode: bool = False):
 :root {{\n{theme}\n}}
 
 /* Hide Streamlit chrome */
-#MainMenu {{ visibility: hidden; }}
 footer {{ visibility: hidden; }}
 header {{ visibility: hidden; }}
 [data-testid="stSidebarNav"] a[href*="admin"] {{ display: none !important; }}
