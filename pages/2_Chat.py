@@ -125,7 +125,7 @@ def main():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    chat_disabled = quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0
+    chat_disabled = bool(quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0)
     if chat_disabled:
         st.error(f"❌ Limite de messages atteinte ({quotas['chat']['used']}/{quotas['chat']['limit']}). Reviens demain !")
 
