@@ -127,7 +127,7 @@ def main():
 
     chat_disabled = quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0
     if chat_disabled:
-        st.error(f"❌ Limite de messages atteinte ({quotas['chat']['limit']}/{quotas['chat']['limit']}). Reviens demain !")
+        st.error(f"❌ Limite de messages atteinte ({quotas['chat']['used']}/{quotas['chat']['limit']}). Reviens demain !")
 
     if prompt := st.chat_input("Pose ta question…", disabled=chat_disabled):
         if len(prompt) > 5000:
