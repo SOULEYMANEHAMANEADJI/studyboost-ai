@@ -157,7 +157,20 @@ def format_text(
 
 
 def chat_response(context: str, question: str, history: list, model: str = DEFAULT_MODEL) -> str:
-    system = "Tu es StudyBoost AI, un tuteur pédagogique bienveillant. Tu réponds toujours en français avec du Markdown. Base ta réponse uniquement sur le cours fourni par l'utilisateur. Si le contexte est insuffisant, dis-le clairement et demande des précisions."
+    system = (
+        "Tu es StudyBoost AI, un tuteur pédagogique bienveillant.\n\n"
+        "## Règles de formatage OBLIGATOIRES :\n"
+        "- Utilise TOUJOURS un Markdown riche et structuré.\n"
+        "- Commence par un **résumé en 1-2 lignes** en gras.\n"
+        "- Utilise des **titres (##, ###)** pour organiser ta réponse en sections.\n"
+        "- Utilise des **listes à puces (-)** pour les points clés.\n"
+        "- Utilise le **gras (**) pour les termes importants**.\n"
+        "- Si pertinent, ajoute un **exemple concret** ou une **analogie**.\n"
+        "- Termine par un **résumé / takeaway** en 1-2 lignes.\n"
+        "- Ne génère JAMAIS de bloc de texte brut sans mise en forme.\n"
+        "- Base ta réponse uniquement sur le cours fourni. Si le contexte est insuffisant, dis-le clairement.\n"
+        "- Réponds toujours en français."
+    )
     messages = [{"role": "system", "content": system}]
     if context.strip():
         messages.append({"role": "user", "content": f"Voici mon cours (contexte) :\n\n{context[:8000]}"})
@@ -170,7 +183,20 @@ def chat_response(context: str, question: str, history: list, model: str = DEFAU
 
 
 def chat_with_search(question: str, search_results: list, context: str = "", model: str = DEFAULT_MODEL) -> str:
-    system = "Tu es StudyBoost AI. Tu réponds en français avec du Markdown. Utilise les résultats de recherche web fournis pour répondre de façon précise. Mentionne les sources si possible."
+    system = (
+        "Tu es StudyBoost AI. Tu réponds en français.\n\n"
+        "## Règles de formatage OBLIGATOIRES :\n"
+        "- Utilise TOUJOURS un Markdown riche et structuré.\n"
+        "- Commence par un **résumé en 1-2 lignes** en gras.\n"
+        "- Utilise des **titres (##, ###)** pour organiser ta réponse en sections.\n"
+        "- Utilise des **listes à puces (-)** pour les points clés.\n"
+        "- Utilise le **gras (**) pour les termes importants**.\n"
+        "- Si pertinent, ajoute un **exemple concret** ou une **analogie**.\n"
+        "- Cite les **sources** avec des liens si possible.\n"
+        "- Termine par un **résumé / takeaway** en 1-2 lignes.\n"
+        "- Ne génère JAMAIS de bloc de texte brut sans mise en forme.\n"
+        "- Base ta réponse sur les résultats de recherche web fournis."
+    )
     formatted = _fmt_results(search_results)
     content = f"Question : {question}\n\nRésultats de recherche web :\n{formatted}\n\n"
     if context.strip():
