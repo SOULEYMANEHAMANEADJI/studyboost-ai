@@ -194,16 +194,14 @@ def increment_quota(user_id: str, quota_type: str):
     col = f"{quota_type}_count"
 
     try:
-        result = (
-            db.table(tbl)
-            .update({
-                col: db.table(tbl).select(col).eq("id", user_id).execute().data[0].get(col, 0) + 1 if db.table(tbl).select(col).eq("id", user_id).execute().data else 1,
-                "quota_date": _quota_date_today(),
-                "last_active": datetime.now(timezone.utc).isoformat(),
-            })
-            .eq("id", user_id)
-            .execute()
-        )
+        result = db.table(tbl).select(col).eq("id", user_id).execute()
+        current = (result.data or [{}])[0].get(col, 0) or 0
+
+        db.table(tbl).update({
+            col: current + 1,
+            "quota_date": _quota_date_today(),
+            "last_active": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", user_id).execute()
     except Exception as e:
         logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
 
@@ -358,9 +356,9 @@ def cleanup_old_data(force: bool = False):
         logger.warning("cleanup_old_data: échec nettoyage feedbacks", exc_info=e)
 
     try:
-        db.table(tbl).delete().lt("last_active", cutoff).execute()
+        db.table("sessions").delete().lt("last_active", cutoff).execute()
     except Exception as e:
-        logger.warning("cleanup_old_data: échec nettoyage %s", tbl, exc_info=e)
+        logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
 
     if force:
         try:
@@ -394,7 +392,7 @@ def admin_get_stats(days: int = 7) -> dict:
 
     try:
         r = (
-            db.table(tbl)
+            db.table("sessions")
             .select("id", count="exact")
             .execute()
         )

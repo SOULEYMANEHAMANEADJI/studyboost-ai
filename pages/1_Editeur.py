@@ -15,6 +15,7 @@ logger = get_logger("editor")
 from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
+from services.pdf_reader import pdf_bytes_to_markdown, MAX_UPLOAD_SIZE_MB
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
 
 
@@ -125,6 +126,67 @@ with col_download:
         ["📥 .MD", "📄 .PDF"],
         label_visibility="collapsed", key="download_format",
     )
+
+st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
+
+col_up1, col_up2 = st.columns([3, 2])
+with col_up1:
+    uploaded_pdf = st.file_uploader(
+        "📄 Glissez-déposez un PDF ici ou cliquez pour parcourir",
+        type=["pdf"],
+        label_visibility="collapsed",
+        key="pdf_uploader",
+    )
+with col_up2:
+    st.caption(f"📏 Max {MAX_UPLOAD_SIZE_MB} Mo — le PDF doit contenir du texte (pas un scan/image)")
+
+if uploaded_pdf is not None:
+    if st.session_state.get("_pdf_upload_name") != uploaded_pdf.name:
+        file_size_mb = uploaded_pdf.size / (1024 * 1024)
+        if file_size_mb > MAX_UPLOAD_SIZE_MB:
+            st.error(f"❌ Fichier trop volumineux ({file_size_mb:.1f} Mo). Maximum autorisé : {MAX_UPLOAD_SIZE_MB} Mo.")
+        else:
+            with st.spinner(f"📄 Analyse de {uploaded_pdf.name}..."):
+                pdf_info = pdf_bytes_to_markdown(uploaded_pdf)
+                if pdf_info and pdf_info.text.strip():
+                    st.session_state["_pdf_info"] = pdf_info
+                    st.session_state["_pdf_upload_name"] = uploaded_pdf.name
+
+    pdf_info = st.session_state.get("_pdf_info")
+    if pdf_info:
+        st.markdown("---")
+        st.success(f"✅ **{uploaded_pdf.name}** — {pdf_info.pages} page(s) · {len(pdf_info.text):,} caractères")
+        if pdf_info.author:
+            st.caption(f"✍️ Auteur détecté : {pdf_info.author}")
+
+        st.markdown("### 👁️ Aperçu du Markdown extrait")
+        st.markdown(
+            f'<div style="height:280px;overflow-y:auto;padding:16px;'
+            f"border:1px solid var(--preview-border);border-radius:8px;background:var(--bg-main);"
+            f'font-family:monospace;font-size:0.82rem;white-space:pre-wrap;color:var(--text-main);'
+            f'">{pdf_info.text[:3000]}{"..." if len(pdf_info.text) > 3000 else ""}</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.caption(f"📝 Le document sera sauvegardé sous : **{pdf_info.title}.md**")
+
+        ci1, ci2, ci3 = st.columns([1, 1, 2])
+        with ci1:
+            if st.button("✅ Importer dans l'éditeur", use_container_width=True, type="primary", key="import_confirm"):
+                st.session_state["editor_text"] = pdf_info.text
+                st.session_state["doc_title"] = pdf_info.title
+                st.session_state["_last_draft"] = None
+                st.session_state.pop("_pdf_info", None)
+                st.session_state.pop("_pdf_upload_name", None)
+                save_draft(user_id, pdf_info.text)
+                increment_quota(user_id, "pdf")
+                log_activity(user_id, "pdf_import", uploaded_pdf.name)
+                st.rerun()
+        with ci2:
+            if st.button("❌ Annuler", use_container_width=True, key="import_cancel"):
+                st.session_state.pop("_pdf_info", None)
+                st.session_state.pop("_pdf_upload_name", None)
+                st.rerun()
 
 st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
 

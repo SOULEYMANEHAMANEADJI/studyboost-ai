@@ -89,6 +89,10 @@ header {{ visibility: hidden; }}
 
 /* Cards */
 .card {{
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    justify-content: space-between !important;
     background: var(--card-bg) !important;
     border: 1.5px solid var(--border) !important;
     border-radius: 20px;
@@ -210,14 +214,6 @@ header {{ visibility: hidden; }}
 }}
 .stApp {{
     animation: fadeIn 0.4s ease-out;
-}}
-
-/* Cards */
-.card {{
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100% !important;
-    justify-content: space-between !important;
 }}
 
 /* Responsive Mobile First */
