@@ -6,7 +6,7 @@ import time
 from typing import Literal
 
 from dotenv import load_dotenv
-from groq import RateLimitError, APITimeoutError, APIConnectionError, AuthenticationError
+from groq import RateLimitError, APITimeoutError, APIConnectionError, AuthenticationError, BadRequestError
 import streamlit as st
 
 from services.logger import get_logger
@@ -132,12 +132,15 @@ def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, 
         except AuthenticationError:
             raise StudyBoostAIError("🔑 Erreur d'authentification. Contacte le support.", "auth")
 
-        except Exception as e:
-            logger.error("_call_groq: échec modèle=%s (tentative %d/%d)", model, attempt + 1, max_retries, exc_info=e)
+        except BadRequestError:
+            raise StudyBoostAIError("⚠️ Requête invalide. Le texte est peut-être trop long pour ce modèle.", "bad_request")
+
+        except Exception:
+            logger.error("_call_groq: échec inattendu modèle=%s (tentative %d/%d)", model, attempt + 1, max_retries, exc_info=True)
             if attempt < max_retries:
                 time.sleep(1)
                 continue
-            raise StudyBoostAIError("❌ Une erreur s'est produite. Réessaie dans quelques instants.", "unknown")
+            raise StudyBoostAIError("❌ Une erreur inattendue s'est produite. Réessaie.", "unknown")
 
 
 def format_text(

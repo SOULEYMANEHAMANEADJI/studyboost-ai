@@ -422,7 +422,7 @@ def admin_get_stats(days: int = 7) -> dict:
         stats["active_users_by_day"][d] = len(u)
 
     try:
-        fbs = _fetchall("SELECT * FROM feedbacks")
+        fbs = _fetchall("SELECT * FROM feedbacks ORDER BY created_at DESC LIMIT 500")
         stats["feedbacks"] = len(fbs)
         stats["feedbacks_list"] = fbs
         ratings = [f["rating"] for f in fbs if f.get("rating")]

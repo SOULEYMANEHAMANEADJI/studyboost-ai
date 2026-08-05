@@ -15,6 +15,7 @@ logger = get_logger("editor")
 from services.database import get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
+from services.docx_generator import markdown_to_docx
 from services.pdf_reader import pdf_bytes_to_markdown, MAX_UPLOAD_SIZE_MB
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
 
@@ -122,7 +123,7 @@ with col_name:
 with col_download:
     download_format = st.selectbox(
         "Format",
-        ["📥 .MD", "📄 .PDF"],
+        ["📥 .MD", "📄 .PDF", "📝 .DOCX"],
         label_visibility="collapsed", key="download_format",
     )
 
@@ -277,6 +278,25 @@ with col_dl2:
             )
         else:
             st.warning("⚠️ Export Markdown temporairement désactivé")
+
+    elif download_format == "📝 .DOCX":
+        _sig = f"docx_{hashlib.md5(editor_text.encode()).hexdigest()}_{doc_title}"
+        if st.session_state.get("_docx_sig") != _sig:
+            with st.spinner("📝 Génération du document Word..."):
+                st.session_state["_docx_bytes"] = markdown_to_docx(
+                    text=editor_text, title=doc_title,
+                )
+            st.session_state["_docx_sig"] = _sig
+
+        st.download_button(
+            "⬇️ Télécharger",
+            data=st.session_state["_docx_bytes"],
+            file_name=f"{doc_title}.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True, type="primary",
+            on_click=lambda: log_activity(user_id, "docx_export", doc_title),
+        )
+
     else:
         if settings.get("feature_pdf_enabled", "true") != "true":
             st.warning("⚠️ Export PDF temporairement désactivé")
