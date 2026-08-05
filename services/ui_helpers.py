@@ -306,6 +306,9 @@ def show_quota_sidebar(quotas: dict | None = None):
     if not quotas:
         return
 
+    if quotas.get("_fallback"):
+        st.warning("⚠️ Quotas en mode dégradé — limites réduites temporairement.")
+
     st.markdown("### 📊 Quotas du jour")
     items = [
         ("pdf", "📄", "PDF"),

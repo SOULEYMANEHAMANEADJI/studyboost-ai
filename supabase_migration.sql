@@ -120,7 +120,22 @@ BEGIN
   END IF;
 END $$;
 
--- 9. Vérification : colonnes sessions
+-- 10. Fonction RPC pour incrément atomique des quotas
+-- Évite les race conditions: un seul appel PostgreSQL = une seule transaction
+CREATE OR REPLACE FUNCTION increment_quota_rpc(_user_id TEXT, _col_name TEXT)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF _col_name NOT IN ('pdf_count', 'chat_count', 'search_count', 'ai_count') THEN
+    RAISE EXCEPTION 'Invalid quota column: %', _col_name;
+  END IF;
+  EXECUTE format(
+    'UPDATE sessions SET %I = COALESCE(%I, 0) + 1, quota_date = %L, last_active = NOW() WHERE id = %L',
+    _col_name, _col_name, to_char(NOW(), 'YYYY-MM-DD'), _user_id
+  );
+END;
+$$;
+
+-- 11. Vérification : colonnes sessions
 SELECT column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'public' AND table_name = 'sessions'

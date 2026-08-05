@@ -113,7 +113,7 @@ def _table() -> str:
         return "anonymous_sessions"
 
 
-def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
+def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict:
     db = get_db()
     settings = get_settings()
     tbl = _table()
@@ -126,6 +126,14 @@ def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
             "ai": {"used": 0, "limit": 9999},
         }
 
+    _fallback = {
+        "pdf": {"used": 0, "limit": 2},
+        "chat": {"used": 0, "limit": 3},
+        "search": {"used": 0, "limit": 1},
+        "ai": {"used": 0, "limit": 2},
+        "_fallback": True,
+    }
+
     _maybe_reset_quotas(user_id, tbl)
 
     try:
@@ -136,11 +144,11 @@ def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict | None:
             .execute()
         )
     except Exception as e:
-        logger.error("get_user_quotas: échec récupération quotas pour %s", user_id, exc_info=e)
-        return None
+        logger.error("get_user_quotas: échec récupération quotas pour %s — fallback actif", user_id, exc_info=e)
+        return _fallback
 
     if not result.data:
-        return None
+        return _fallback
 
     usage = result.data[0]
     return {
@@ -190,20 +198,12 @@ def _maybe_reset_quotas(user_id: str, tbl: str):
 
 def increment_quota(user_id: str, quota_type: str):
     db = get_db()
-    tbl = _table()
     col = f"{quota_type}_count"
 
     try:
-        result = db.table(tbl).select(col).eq("id", user_id).execute()
-        current = (result.data or [{}])[0].get(col, 0) or 0
-
-        db.table(tbl).update({
-            col: current + 1,
-            "quota_date": _quota_date_today(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", user_id).execute()
+        db.rpc("increment_quota_rpc", {"_user_id": user_id, "_col_name": col}).execute()
     except Exception as e:
-        logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
+        logger.error("increment_quota: échec RPC pour %s/%s", user_id, quota_type, exc_info=e)
 
 
 # ---------------------------------------------------------------------------
