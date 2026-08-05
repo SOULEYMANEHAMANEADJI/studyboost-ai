@@ -3,7 +3,7 @@ import re
 
 from dotenv import load_dotenv; load_dotenv()
 import streamlit as st
-from services.database import get_db, get_settings, save_feedback
+from services.database import get_settings, save_feedback
 from services.identity import get_user_id, init_user_identity
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar
 
@@ -30,9 +30,8 @@ def main():
     dark_mode = st.session_state.get("dark_mode", False)
     inject_css(dark_mode)
 
-    db = get_db()
     settings = get_settings()
-    init_user_identity(db)
+    init_user_identity()
     user_id = get_user_id()
 
     with st.sidebar:

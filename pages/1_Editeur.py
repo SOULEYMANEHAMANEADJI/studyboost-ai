@@ -12,7 +12,7 @@ from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.logger import get_logger
 
 logger = get_logger("editor")
-from services.database import get_db, get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
+from services.database import get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
 from services.pdf_reader import pdf_bytes_to_markdown, MAX_UPLOAD_SIZE_MB
@@ -54,8 +54,7 @@ st.set_page_config(
 
 MAX_CHARS = 15000
 
-db = get_db()
-init_user_identity(db)
+init_user_identity()
 settings = get_settings()
 user_id = get_user_id()
 

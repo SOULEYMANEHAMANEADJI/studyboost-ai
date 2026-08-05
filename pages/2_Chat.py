@@ -6,7 +6,7 @@ import streamlit as st
 from version import VERSION
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, chat_response, chat_with_search
 from services.database import (
-    get_db, get_settings, log_activity, save_chat_message,
+    get_settings, log_activity, save_chat_message,
     get_chat_history, clear_chat_history, get_user_quotas, increment_quota,
 )
 from services.identity import get_user_id, init_user_identity, is_admin
@@ -32,8 +32,7 @@ def main():
         st.rerun()
     inject_css(dark_mode)
 
-    db = get_db()
-    init_user_identity(db)
+    init_user_identity()
     settings = get_settings()
     user_id = get_user_id()
 

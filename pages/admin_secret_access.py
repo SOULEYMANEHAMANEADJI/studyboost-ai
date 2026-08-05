@@ -10,7 +10,7 @@ import streamlit as st
 
 from services.ai import AVAILABLE_MODELS
 from services.database import (
-    get_db, get_settings, update_setting, admin_get_stats, cleanup_old_data, log_activity,
+    get_settings, update_setting, admin_get_stats, cleanup_old_data, log_activity,
 )
 from services.identity import get_user_id, init_user_identity
 from services.ui_helpers import inject_css
@@ -76,12 +76,11 @@ def _check_password():
 
 def main():
     inject_css()
-    db = get_db()
     if not _check_password():
         st.stop()
 
     settings = get_settings()
-    init_user_identity(db)
+    init_user_identity()
     user_id = get_user_id()
     period = st.sidebar.selectbox("📊 Période", [7, 14, 30], index=0)
     stats = admin_get_stats(days=period)

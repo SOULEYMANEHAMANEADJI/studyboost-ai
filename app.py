@@ -16,16 +16,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from services.database import get_db, get_settings, get_user_quotas, cleanup_old_data
+from services.database import _fetchone, get_settings, get_user_quotas, cleanup_old_data
 from services.identity import init_user_identity, logout, is_admin
 from services.ui_helpers import inject_css, show_quota_sidebar
 
 
 def _maybe_cleanup():
-    db = get_db()
     try:
-        row = db.table("admin_settings").select("value").eq("key", "last_cleanup").execute()
-        last = row.data[0]["value"] if row.data else None
+        row = _fetchone("SELECT value FROM admin_settings WHERE key = 'last_cleanup'")
+        last = row["value"] if row else None
     except Exception:
         last = None
 
@@ -41,9 +40,8 @@ def _maybe_cleanup():
 
 
 def main():
-    db = get_db()
     settings = get_settings()
-    user = init_user_identity(db)
+    user = init_user_identity()
     retention_days = settings.get("retention_days", "7")
 
     _maybe_cleanup()

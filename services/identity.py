@@ -9,6 +9,7 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import psycopg2.extras
 import streamlit as st
 
 from services.logger import get_logger
@@ -48,18 +49,22 @@ def generate_alias() -> dict:
     }
 
 
-def init_user_identity(db=None):
-    # Déjà chargé dans cette session (même onglet)
+def init_user_identity():
+    """Initialise ou restaure l'identité anonyme de l'utilisateur."""
+    from services.database import get_db, release_db, _execute
+
     if "user_data" in st.session_state:
         return st.session_state["user_data"]
 
-    # Tentative de restauration depuis l'URL (F5 dans le même onglet)
     sid_from_url = st.query_params.get("sid")
-    if sid_from_url and db:
+    if sid_from_url:
+        db = get_db()
         try:
-            result = db.table("sessions").select("*").eq("id", sid_from_url).execute()
-            if result.data:
-                session = result.data[0]
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT * FROM sessions WHERE id = %s", (sid_from_url,))
+            session = cur.fetchone()
+            cur.close()
+            if session:
                 created = datetime.fromisoformat(
                     str(session["created_at"]).replace("Z", "+00:00")
                 )
@@ -71,46 +76,48 @@ def init_user_identity(db=None):
                             "animal": session.get("alias_animal", "Étudiant"),
                             "adjective": session.get("alias_adjective", "Anonyme"),
                             "number": session.get("alias_number", 0),
-                            "display": session.get(
-                                "alias_display", "🎓 Étudiant-Anonyme"
-                            ),
+                            "display": session.get("alias_display", "🎓 Étudiant-Anonyme"),
                         },
                         "is_returning": True,
                     }
+                    release_db(db)
                     return st.session_state["user_data"]
         except Exception as e:
-            logger.warning("init_user_identity: échec validation URL sid %s", sid_from_url[:8], exc_info=e)
+            logger.warning("init_user_identity: échec validation session %s", sid_from_url[:8], exc_info=e)
+        finally:
+            release_db(db)
 
-    # Nouvelle identité
     new_id = str(uuid.uuid4())
     alias = generate_alias()
 
-    if db:
-        try:
-            db.table("sessions").insert({
-                "id": new_id,
-                "alias_emoji": alias["emoji"],
-                "alias_animal": alias["animal"],
-                "alias_adjective": alias["adjective"],
-                "alias_number": alias["number"],
-                "alias_display": alias["display"],
-                "pdf_count": 0,
-                "chat_count": 0,
-                "search_count": 0,
-                "ai_count": 0,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "last_active": datetime.now(timezone.utc).isoformat(),
-            }).execute()
-        except Exception as e:
-            logger.error("init_user_identity: échec création session Supabase pour %s", new_id[:8], exc_info=e)
+    db = get_db()
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "INSERT INTO sessions (id, alias_emoji, alias_animal, alias_adjective, "
+            "alias_number, alias_display, pdf_count, chat_count, search_count, "
+            "ai_count, created_at, last_active) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 0, 0, 0, 0, %s, %s)",
+            (
+                new_id,
+                alias["emoji"], alias["animal"], alias["adjective"],
+                alias["number"], alias["display"],
+                datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        db.commit()
+        cur.close()
+    except Exception as e:
+        logger.error("init_user_identity: échec création session pour %s", new_id[:8], exc_info=e)
+    finally:
+        release_db(db)
 
     st.session_state["user_data"] = {
         "id": new_id,
         "alias": alias,
         "is_returning": False,
     }
-
-    # Persister dans l'URL pour le F5 (uniquement ce même onglet)
     st.query_params["sid"] = new_id
 
     return st.session_state["user_data"]
@@ -119,7 +126,7 @@ def init_user_identity(db=None):
 def get_user_id() -> str:
     if "user_data" in st.session_state:
         return st.session_state["user_data"]["id"]
-    raise RuntimeError("get_user_id() appelé sans init_user_identity() — appelle init_user_identity(db) en premier.")
+    raise RuntimeError("get_user_id() appelé sans init_user_identity() — appelle init_user_identity() en premier.")
 
 
 def get_user_alias() -> dict:

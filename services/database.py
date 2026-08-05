@@ -1,12 +1,14 @@
-"""Supabase database layer with caching for StudyBoost AI."""
+"""Neon PostgreSQL database layer for StudyBoost AI."""
 from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
 
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
 from dotenv import load_dotenv
 import streamlit as st
-from supabase import Client, create_client
 
 from services.logger import get_logger
 
@@ -15,28 +17,69 @@ logger = get_logger("database")
 load_dotenv()
 
 
-def _get_creds() -> dict:
+def _get_db_url() -> str:
     try:
-        return {"url": st.secrets["SUPABASE_URL"], "key": st.secrets["SUPABASE_ANON_KEY"]}
+        url = st.secrets.get("DATABASE_URL") or st.secrets.get("SUPABASE_URL")
     except Exception as e:
-        logger.warning("_get_creds: fallback secrets→os.environ", exc_info=e)
-        return {
-            "url": os.environ.get("SUPABASE_URL", ""),
-            "key": os.environ.get("SUPABASE_ANON_KEY", ""),
-        }
+        logger.warning("_get_db_url: fallback secrets→os.environ", exc_info=e)
+        url = None
+    if not url:
+        url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise RuntimeError("DATABASE_URL is missing in secrets and environment.")
+    return url
 
 
 @st.cache_resource
-def get_db() -> Client:
-    creds = _get_creds()
-    if not creds["url"] or not creds["key"]:
-        raise RuntimeError("Supabase credentials are missing.")
+def _get_pool():
+    url = _get_db_url()
+    return psycopg2.pool.ThreadedConnectionPool(1, 10, url, connect_timeout=15)
+
+
+def get_db():
+    pool = _get_pool()
+    return pool.getconn()
+
+
+def release_db(conn):
     try:
-        from supabase import ClientOptions
-        opts = ClientOptions(postgrest_client_timeout=30)
-        return create_client(creds["url"], creds["key"], options=opts)
-    except (ImportError, TypeError):
-        return create_client(creds["url"], creds["key"])
+        _get_pool().putconn(conn)
+    except Exception:
+        pass
+
+
+def _fetchone(query: str, params: tuple | None = None) -> dict | None:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        pool.putconn(conn)
+
+
+def _fetchall(query: str, params: tuple | None = None) -> list[dict]:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, params)
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        pool.putconn(conn)
+
+
+def _execute(query: str, params: tuple | None = None) -> None:
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+        conn.commit()
+    finally:
+        pool.putconn(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -61,34 +104,34 @@ DEFAULT_SETTINGS = {
 
 @st.cache_data(ttl=60)
 def get_settings() -> dict:
-    db = get_db()
     try:
-        result = db.table("admin_settings").select("key, value").execute()
-        rows = result.data or []
-        settings = {row["key"]: row["value"] for row in rows}
+        rows = _fetchall("SELECT key, value FROM admin_settings")
+        settings = {r["key"]: r["value"] for r in rows}
     except Exception as e:
-        logger.error("get_settings: échec chargement settings depuis Supabase", exc_info=e)
+        logger.error("get_settings: échec chargement depuis Neon", exc_info=e)
         settings = {}
 
     for key, val in DEFAULT_SETTINGS.items():
         if key not in settings:
             settings[key] = val
             try:
-                db.table("admin_settings").insert({"key": key, "value": val}).execute()
+                _execute(
+                    "INSERT INTO admin_settings (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (key, val),
+                )
             except Exception as e:
-                logger.warning("get_settings: échec insertion setting %s", key, exc_info=e)
+                logger.warning("get_settings: échec insertion default %s", key, exc_info=e)
     return settings
 
 
 def update_setting(key: str, value: str | int | bool) -> bool:
-    db = get_db()
     s = str(value).lower() if isinstance(value, bool) else str(value)
     try:
-        existing = db.table("admin_settings").select("key").eq("key", key).execute()
-        if existing.data:
-            db.table("admin_settings").update({"value": s}).eq("key", key).execute()
-        else:
-            db.table("admin_settings").insert({"key": key, "value": s}).execute()
+        _execute(
+            "INSERT INTO admin_settings (key, value) VALUES (%s, %s) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            (key, s),
+        )
         get_settings.clear()
         return True
     except Exception as e:
@@ -98,26 +141,32 @@ def update_setting(key: str, value: str | int | bool) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Quotas (cache 30s)
+# Quotas
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=3600)
-def _table() -> str:
-    """Return sessions table name if it exists, else anonymous_sessions."""
-    db = get_db()
+def _quota_date_today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _maybe_reset_quotas(user_id: str) -> bool:
+    today = _quota_date_today()
     try:
-        db.table("sessions").select("id").limit(1).execute()
-        return "sessions"
+        row = _fetchone(
+            "SELECT quota_date FROM sessions WHERE id = %s", (user_id,)
+        )
+        if row and row.get("quota_date") != today:
+            _execute(
+                "UPDATE sessions SET pdf_count=0, chat_count=0, search_count=0, "
+                "ai_count=0, quota_date=%s, last_active=NOW() WHERE id=%s",
+                (today, user_id),
+            )
+            return True
     except Exception as e:
-        logger.warning("_table(): sessions introuvable, fallback anonymous_sessions", exc_info=e)
-        return "anonymous_sessions"
+        logger.warning("_maybe_reset_quotas: échec pour %s", user_id, exc_info=e)
+    return False
 
 
 def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict:
-    db = get_db()
-    settings = get_settings()
-    tbl = _table()
-
     if admin_bypass:
         return {
             "pdf": {"used": 0, "limit": 9999},
@@ -134,88 +183,51 @@ def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict:
         "_fallback": True,
     }
 
-    _maybe_reset_quotas(user_id, tbl)
+    settings = get_settings()
+    _maybe_reset_quotas(user_id)
 
     try:
-        result = (
-            db.table(tbl)
-            .select("pdf_count, chat_count, search_count, ai_count")
-            .eq("id", user_id)
-            .execute()
+        row = _fetchone(
+            "SELECT pdf_count, chat_count, search_count, ai_count FROM sessions WHERE id = %s",
+            (user_id,),
         )
     except Exception as e:
-        logger.error("get_user_quotas: échec récupération quotas pour %s — fallback actif", user_id, exc_info=e)
+        logger.error("get_user_quotas: échec pour %s — fallback actif", user_id, exc_info=e)
         return _fallback
 
-    if not result.data:
+    if not row:
         return _fallback
 
-    usage = result.data[0]
     return {
         "pdf": {
-            "used": usage.get("pdf_count", 0) or 0,
+            "used": row.get("pdf_count", 0) or 0,
             "limit": int(settings.get("quota_pdf_per_day", 10)),
         },
         "chat": {
-            "used": usage.get("chat_count", 0) or 0,
+            "used": row.get("chat_count", 0) or 0,
             "limit": int(settings.get("quota_chat_per_day", 20)),
         },
         "search": {
-            "used": usage.get("search_count", 0) or 0,
+            "used": row.get("search_count", 0) or 0,
             "limit": int(settings.get("quota_search_per_day", 10)),
         },
         "ai": {
-            "used": usage.get("ai_count", 0) or 0,
+            "used": row.get("ai_count", 0) or 0,
             "limit": int(settings.get("quota_ai_per_day", 15)),
         },
     }
 
 
-def _quota_date_today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def _maybe_reset_quotas(user_id: str, tbl: str):
-    """Reset quota counters if quota_date != today."""
-    db = get_db()
-    today = _quota_date_today()
-    try:
-        row = db.table(tbl).select("quota_date, last_active").eq("id", user_id).execute()
-        if row.data:
-            stored = row.data[0].get("quota_date") or ""
-            if stored != today:
-                db.table(tbl).update({
-                    "pdf_count": 0, "chat_count": 0,
-                    "search_count": 0, "ai_count": 0,
-                    "quota_date": today,
-                    "last_active": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", user_id).execute()
-                return True
-    except Exception as e:
-        logger.warning("_maybe_reset_quotas: échec pour %s", user_id, exc_info=e)
-    return False
-
-
 def increment_quota(user_id: str, quota_type: str):
-    db = get_db()
     col = f"{quota_type}_count"
+    today = _quota_date_today()
 
     try:
-        db.rpc("increment_quota_rpc", {"_user_id": user_id, "_col_name": col}).execute()
-        return
-    except Exception:
-        logger.info("increment_quota: RPC indisponible, fallback read+write pour %s/%s", user_id, quota_type)
-
-    try:
-        tbl = _table()
-        result = db.table(tbl).select(col).eq("id", user_id).execute()
-        current = (result.data or [{}])[0].get(col, 0) or 0
-
-        db.table(tbl).update({
-            col: current + 1,
-            "quota_date": _quota_date_today(),
-            "last_active": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", user_id).execute()
+        _execute(
+            f"UPDATE sessions SET {col} = COALESCE({col}, 0) + 1, "
+            "quota_date = %s, last_active = NOW() WHERE id = %s",
+            (today, user_id),
+        )
     except Exception as e:
         logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
 
@@ -225,14 +237,12 @@ def increment_quota(user_id: str, quota_type: str):
 # ---------------------------------------------------------------------------
 
 def log_activity(user_id: str, action_type: str, detail: str = ""):
-    db = get_db()
     try:
-        db.table("activity_logs").insert({
-            "session_id": user_id,
-            "action_type": action_type,
-            "action_detail": detail[:500],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        _execute(
+            "INSERT INTO activity_logs (session_id, action_type, action_detail, created_at) "
+            "VALUES (%s, %s, %s, NOW())",
+            (user_id, action_type, detail[:500]),
+        )
     except Exception as e:
         logger.warning("log_activity: échec pour %s / %s", user_id, action_type, exc_info=e)
 
@@ -242,43 +252,32 @@ def log_activity(user_id: str, action_type: str, detail: str = ""):
 # ---------------------------------------------------------------------------
 
 def save_chat_message(user_id: str, role: str, content: str):
-    db = get_db()
     try:
-        db.table("chat_history").insert({
-            "session_id": user_id,
-            "role": role,
-            "content": content[:5000],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
-        logger.info("Saved chat message for %s, role=%s, %d chars", user_id, role, len(content))
+        _execute(
+            "INSERT INTO chat_history (session_id, role, content, created_at) "
+            "VALUES (%s, %s, %s, NOW())",
+            (user_id, role, content[:5000]),
+        )
     except Exception as e:
-        logger.error("save_chat_message: échec pour session %s", user_id, exc_info=e)
+        logger.error("save_chat_message: échec pour %s", user_id, exc_info=e)
 
 
 def get_chat_history(user_id: str) -> list:
-    db = get_db()
     try:
-        result = (
-            db.table("chat_history")
-            .select("role, content")
-            .eq("session_id", user_id)
-            .order("created_at")
-            .execute()
+        return _fetchall(
+            "SELECT role, content FROM chat_history WHERE session_id = %s ORDER BY created_at",
+            (user_id,),
         )
-        msgs = result.data or []
-        logger.info("Fetched %d chat messages for %s", len(msgs), user_id)
-        return msgs
     except Exception as e:
-        logger.error("get_chat_history: échec pour session %s", user_id, exc_info=e)
+        logger.error("get_chat_history: échec pour %s", user_id, exc_info=e)
         return []
 
 
 def clear_chat_history(user_id: str):
-    db = get_db()
     try:
-        db.table("chat_history").delete().eq("session_id", user_id).execute()
+        _execute("DELETE FROM chat_history WHERE session_id = %s", (user_id,))
     except Exception as e:
-        logger.warning("clear_chat_history: échec pour session %s", user_id, exc_info=e)
+        logger.warning("clear_chat_history: échec pour %s", user_id, exc_info=e)
 
 
 # ---------------------------------------------------------------------------
@@ -286,14 +285,17 @@ def clear_chat_history(user_id: str):
 # ---------------------------------------------------------------------------
 
 def save_draft(user_id: str, text: str, model: str | None = None):
-    db = get_db()
-    tbl = _table()
-    update = {"draft_text": text[:15000], "last_active": datetime.now(timezone.utc).isoformat()}
-    if model:
-        update["preferred_model"] = model
     try:
-        db.table(tbl).update(update).eq("id", user_id).execute()
-        logger.info("Saved draft for %s, %d chars, model=%s", user_id, len(text), model or "none")
+        if model:
+            _execute(
+                "UPDATE sessions SET draft_text=%s, preferred_model=%s, last_active=NOW() WHERE id=%s",
+                (text[:15000], model, user_id),
+            )
+        else:
+            _execute(
+                "UPDATE sessions SET draft_text=%s, last_active=NOW() WHERE id=%s",
+                (text[:15000], user_id),
+            )
     except Exception as e:
         logger.warning("save_draft: échec pour %s", user_id, exc_info=e)
     load_draft.clear()
@@ -301,16 +303,13 @@ def save_draft(user_id: str, text: str, model: str | None = None):
 
 @st.cache_data(ttl=5)
 def load_draft(user_id: str) -> tuple:
-    db = get_db()
-    tbl = _table()
     try:
-        row = db.table(tbl).select("draft_text, preferred_model").eq("id", user_id).execute()
-        if row.data:
-            r = row.data[0]
-            txt = r.get("draft_text") or ""
-            mod = r.get("preferred_model") or ""
-            logger.info("Loaded draft for %s, %d chars", user_id, len(txt))
-            return (txt, mod)
+        row = _fetchone(
+            "SELECT draft_text, preferred_model FROM sessions WHERE id = %s",
+            (user_id,),
+        )
+        if row:
+            return (row.get("draft_text") or "", row.get("preferred_model") or "")
     except Exception as e:
         logger.warning("load_draft: échec pour %s", user_id, exc_info=e)
     return ("", "")
@@ -321,21 +320,16 @@ def load_draft(user_id: str) -> tuple:
 # ---------------------------------------------------------------------------
 
 def save_feedback(user_id: str, rating: int, comment: str, feature_request: str, other_idea: str, email: str) -> bool:
-    db = get_db()
     try:
-        db.table("feedbacks").insert({
-            "session_id": user_id,
-            "rating": rating,
-            "comment": comment[:2000],
-            "feature_request": feature_request[:500],
-            "other_idea": other_idea[:500],
-            "email": email[:255] if email else None,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
+        _execute(
+            "INSERT INTO feedbacks (session_id, rating, comment, feature_request, "
+            "other_idea, email, created_at) VALUES (%s, %s, %s, %s, %s, %s, NOW())",
+            (user_id, rating, comment[:2000], feature_request[:500], other_idea[:500], email[:255] if email else None),
+        )
         log_activity(user_id, "feedback", f"rating={rating}")
         return True
     except Exception as e:
-        logger.error("save_feedback: échec enregistrement pour session %s", user_id, exc_info=e)
+        logger.error("save_feedback: échec pour %s", user_id, exc_info=e)
         st.error("Une erreur est survenue lors de l'envoi de ton avis. Réessaie plus tard.")
         return False
 
@@ -350,33 +344,27 @@ def cleanup_old_data(force: bool = False):
         return
 
     days = int(settings.get("retention_days", "7"))
-    db = get_db()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     logger.info("cleanup_old_data: suppression données antérieures à %d jours (%s)", days, cutoff)
 
-    try:
-        db.table("chat_history").delete().lt("created_at", cutoff).execute()
-    except Exception as e:
-        logger.warning("cleanup_old_data: échec nettoyage chat_history", exc_info=e)
+    for table in ("chat_history", "activity_logs", "feedbacks"):
+        try:
+            _execute(f"DELETE FROM {table} WHERE created_at < %s", (cutoff,))
+        except Exception as e:
+            logger.warning("cleanup_old_data: échec nettoyage %s", table, exc_info=e)
 
     try:
-        db.table("activity_logs").delete().lt("created_at", cutoff).execute()
-    except Exception as e:
-        logger.warning("cleanup_old_data: échec nettoyage activity_logs", exc_info=e)
-
-    try:
-        db.table("feedbacks").delete().lt("created_at", cutoff).execute()
-    except Exception as e:
-        logger.warning("cleanup_old_data: échec nettoyage feedbacks", exc_info=e)
-
-    try:
-        db.table("sessions").delete().lt("last_active", cutoff).execute()
+        _execute("DELETE FROM sessions WHERE last_active < %s", (cutoff,))
     except Exception as e:
         logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
 
     if force:
         try:
-            db.table("admin_settings").upsert({"key": "last_cleanup", "value": datetime.now(timezone.utc).isoformat()}).execute()
+            _execute(
+                "INSERT INTO admin_settings (key, value) VALUES ('last_cleanup', %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (datetime.now(timezone.utc).isoformat(),),
+            )
         except Exception as e:
             logger.warning("cleanup_old_data: échec enregistrement last_cleanup", exc_info=e)
 
@@ -386,7 +374,6 @@ def cleanup_old_data(force: bool = False):
 # ---------------------------------------------------------------------------
 
 def admin_get_stats(days: int = 7) -> dict:
-    db = get_db()
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     stats = {
         "total_sessions": 0,
@@ -405,29 +392,22 @@ def admin_get_stats(days: int = 7) -> dict:
     }
 
     try:
-        r = (
-            db.table("sessions")
-            .select("id", count="exact")
-            .execute()
-        )
-        stats["total_sessions"] = r.count or 0
+        row = _fetchone("SELECT count(*) AS cnt FROM sessions")
+        stats["total_sessions"] = row["cnt"] if row else 0
     except Exception as e:
         logger.error("admin_get_stats: échec sessions count", exc_info=e)
 
+    actions = []
     try:
-        r = (
-            db.table("activity_logs")
-            .select("action_type,action_detail,created_at,session_id")
-            .gte("created_at", since)
-            .order("created_at", desc=True)
-            .execute()
+        actions = _fetchall(
+            "SELECT action_type, action_detail, created_at, session_id "
+            "FROM activity_logs WHERE created_at >= %s ORDER BY created_at DESC",
+            (since,),
         )
-        actions = r.data or []
         stats["actions_period"] = len(actions)
         stats["recent_actions"] = actions[:30]
     except Exception as e:
         logger.error("admin_get_stats: échec activity_logs", exc_info=e)
-        actions = []
 
     for a in actions:
         day = (a.get("created_at") or "")[:10]
@@ -441,8 +421,7 @@ def admin_get_stats(days: int = 7) -> dict:
         stats["active_users_by_day"][d] = len(u)
 
     try:
-        r = db.table("feedbacks").select("*").execute()
-        fbs = r.data or []
+        fbs = _fetchall("SELECT * FROM feedbacks")
         stats["feedbacks"] = len(fbs)
         stats["feedbacks_list"] = fbs
         ratings = [f["rating"] for f in fbs if f.get("rating")]
@@ -465,6 +444,3 @@ def admin_get_stats(days: int = 7) -> dict:
         logger.error("admin_get_stats: échec feedbacks", exc_info=e)
 
     return stats
-
-
-
