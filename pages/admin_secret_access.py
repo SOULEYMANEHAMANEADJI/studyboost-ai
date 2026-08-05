@@ -1,9 +1,10 @@
 """Admin Dashboard — accès par URL directe uniquement."""
+import hashlib
+import hmac
 import os
 import time
 
 from dotenv import load_dotenv; load_dotenv()
-import bcrypt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -26,11 +27,7 @@ LOCKOUT_SECONDS = 300
 
 
 def _hash_password(pwd: str) -> str:
-    return bcrypt.hashpw(pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def _verify_password(pwd: str, hashed: str) -> bool:
-    return bcrypt.checkpw(pwd.encode("utf-8"), hashed.encode("utf-8"))
+    return hashlib.sha256(pwd.encode("utf-8")).hexdigest()
 
 
 def _check_password():
@@ -58,7 +55,7 @@ def _check_password():
         if st.form_submit_button("Connexion", use_container_width=True, type="primary"):
             if not pwd:
                 st.error("Mot de passe vide.")
-            elif _verify_password(pwd, pw):
+            elif hmac.compare_digest(_hash_password(pwd), _hash_password(pw)):
                 st.session_state["admin_auth"] = True
                 st.session_state["admin_attempts"] = 0
                 st.rerun()
