@@ -202,8 +202,22 @@ def increment_quota(user_id: str, quota_type: str):
 
     try:
         db.rpc("increment_quota_rpc", {"_user_id": user_id, "_col_name": col}).execute()
+        return
+    except Exception:
+        logger.info("increment_quota: RPC indisponible, fallback read+write pour %s/%s", user_id, quota_type)
+
+    try:
+        tbl = _table()
+        result = db.table(tbl).select(col).eq("id", user_id).execute()
+        current = (result.data or [{}])[0].get(col, 0) or 0
+
+        db.table(tbl).update({
+            col: current + 1,
+            "quota_date": _quota_date_today(),
+            "last_active": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", user_id).execute()
     except Exception as e:
-        logger.error("increment_quota: échec RPC pour %s/%s", user_id, quota_type, exc_info=e)
+        logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
 
 
 # ---------------------------------------------------------------------------
