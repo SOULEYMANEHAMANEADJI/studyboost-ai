@@ -154,7 +154,10 @@ def _maybe_reset_quotas(user_id: str) -> bool:
         row = _fetchone(
             "SELECT quota_date FROM sessions WHERE id = %s", (user_id,)
         )
-        if row and row.get("quota_date") != today:
+        if not row:
+            _ensure_session_exists(user_id)
+            return False
+        if row.get("quota_date") != today:
             _execute(
                 "UPDATE sessions SET pdf_count=0, chat_count=0, search_count=0, "
                 "ai_count=0, quota_date=%s, last_active=NOW() WHERE id=%s",
@@ -164,6 +167,17 @@ def _maybe_reset_quotas(user_id: str) -> bool:
     except Exception as e:
         logger.warning("_maybe_reset_quotas: échec pour %s", user_id, exc_info=e)
     return False
+
+
+def _ensure_session_exists(user_id: str):
+    try:
+        _execute(
+            "INSERT INTO sessions (id, quota_date, created_at, last_active) "
+            "VALUES (%s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
+            (user_id, _quota_date_today()),
+        )
+    except Exception as e:
+        logger.warning("_ensure_session_exists: échec pour %s", user_id, exc_info=e)
 
 
 def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict:

@@ -51,7 +51,7 @@ def generate_alias() -> dict:
 
 def init_user_identity():
     """Initialise ou restaure l'identité anonyme de l'utilisateur."""
-    from services.database import get_db, release_db, _execute
+    from services.database import get_db, release_db
 
     if "user_data" in st.session_state:
         return st.session_state["user_data"]
@@ -63,6 +63,12 @@ def init_user_identity():
             cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute("SELECT * FROM sessions WHERE id = %s", (sid_from_url,))
             session = cur.fetchone()
+            if session:
+                cur.execute(
+                    "UPDATE sessions SET last_active = NOW() WHERE id = %s",
+                    (sid_from_url,),
+                )
+                db.commit()
             cur.close()
             if session:
                 created = datetime.fromisoformat(
@@ -83,42 +89,57 @@ def init_user_identity():
                     release_db(db)
                     return st.session_state["user_data"]
         except Exception as e:
-            logger.warning("init_user_identity: échec validation session %s", sid_from_url[:8], exc_info=e)
+            logger.warning("init_user_identity: échec restauration session %s", sid_from_url[:8], exc_info=e)
         finally:
             release_db(db)
 
     new_id = str(uuid.uuid4())
     alias = generate_alias()
 
-    db = get_db()
-    try:
-        cur = db.cursor()
-        cur.execute(
-            "INSERT INTO sessions (id, alias_emoji, alias_animal, alias_adjective, "
-            "alias_number, alias_display, pdf_count, chat_count, search_count, "
-            "ai_count, created_at, last_active) "
-            "VALUES (%s, %s, %s, %s, %s, %s, 0, 0, 0, 0, %s, %s)",
-            (
-                new_id,
-                alias["emoji"], alias["animal"], alias["adjective"],
-                alias["number"], alias["display"],
-                datetime.now(timezone.utc).isoformat(),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        db.commit()
-        cur.close()
-    except Exception as e:
-        logger.error("init_user_identity: échec création session pour %s", new_id[:8], exc_info=e)
-    finally:
-        release_db(db)
+    inserted = False
+    for attempt in range(2):
+        db = get_db()
+        try:
+            cur = db.cursor()
+            cur.execute(
+                "INSERT INTO sessions (id, alias_emoji, alias_animal, alias_adjective, "
+                "alias_number, alias_display, pdf_count, chat_count, search_count, "
+                "ai_count, quota_date, created_at, last_active) "
+                "VALUES (%s, %s, %s, %s, %s, %s, 0, 0, 0, 0, %s, %s, %s)",
+                (
+                    new_id,
+                    alias["emoji"], alias["animal"], alias["adjective"],
+                    alias["number"], alias["display"],
+                    datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            db.commit()
+            cur.close()
+
+            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT id FROM sessions WHERE id = %s", (new_id,))
+            row = cur.fetchone()
+            cur.close()
+            if row:
+                inserted = True
+                break
+        except Exception as e:
+            logger.error("init_user_identity: échec création session (tentative %d) pour %s", attempt + 1, new_id[:8], exc_info=e)
+        finally:
+            release_db(db)
+
+    if not inserted:
+        logger.error("init_user_identity: ÉCHEC CRITIQUE — impossible de créer la session %s après 2 tentatives", new_id[:8])
 
     st.session_state["user_data"] = {
         "id": new_id,
         "alias": alias,
         "is_returning": False,
     }
-    st.query_params["sid"] = new_id
+    if inserted:
+        st.query_params["sid"] = new_id
 
     return st.session_state["user_data"]
 
