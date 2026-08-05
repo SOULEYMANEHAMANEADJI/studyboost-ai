@@ -129,16 +129,15 @@ with col_download:
 
 st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
 
-col_up1, col_up2 = st.columns([3, 2])
-with col_up1:
+has_pdf_preview = st.session_state.get("_pdf_info") is not None
+with st.expander("📄 Importer un PDF → Markdown", expanded=has_pdf_preview):
+    st.caption(f"Glissez-déposez un PDF ou cliquez pour parcourir — max {MAX_UPLOAD_SIZE_MB} Mo, texte seulement (pas scan)")
     uploaded_pdf = st.file_uploader(
-        "📄 Glissez-déposez un PDF ici ou cliquez pour parcourir",
+        "Choisir un fichier PDF",
         type=["pdf"],
         label_visibility="collapsed",
         key="pdf_uploader",
     )
-with col_up2:
-    st.caption(f"📏 Max {MAX_UPLOAD_SIZE_MB} Mo — le PDF doit contenir du texte (pas un scan/image)")
 
 if uploaded_pdf is not None:
     if st.session_state.get("_pdf_upload_name") != uploaded_pdf.name:

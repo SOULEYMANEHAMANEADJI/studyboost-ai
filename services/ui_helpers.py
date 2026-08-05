@@ -180,6 +180,41 @@ footer {{ visibility: hidden; }}
     line-height: 1.1;
 }}
 
+.badge {{
+    display: inline-block;
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    color: white;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}}
+
+/* Selection */
+::selection {{
+    background: rgba(79, 70, 229, 0.2);
+    color: var(--text-main);
+}}
+
+/* Focus ring */
+*:focus-visible {{
+    outline: 2px solid #4F46E5;
+    outline-offset: 2px;
+    border-radius: 4px;
+}}
+
+/* Toast / success messages */
+.stAlert {{
+    border-radius: 12px !important;
+    border: none !important;
+    font-weight: 500;
+}}
+div[data-testid="stNotification"] {{
+    border-radius: 12px !important;
+}}
+
 /* Scrollbar */
 ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
 ::-webkit-scrollbar-track {{ background: var(--bg-secondary); }}

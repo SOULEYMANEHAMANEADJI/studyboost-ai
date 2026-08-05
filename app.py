@@ -96,18 +96,13 @@ def main():
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<p style="text-align:center;color:#64748B;font-size:1.2rem;">'
+        '<p style="text-align:center;color:var(--text-secondary);font-size:1.2rem;margin-top:-0.5rem;">'
         "Ton assistant de révision intelligent — 100% gratuit"
         "</p>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div style="text-align:center;"><span class="badge">BETA</span></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<div style="text-align:center;color:#94A3B8;font-size:0.75rem;margin-bottom:0.5rem;">'
-        f'v{VERSION} · StudyBoost AI</div>',
+        '<div style="text-align:center;"><span class="badge">BETA v' + VERSION + '</span></div>',
         unsafe_allow_html=True,
     )
     st.markdown("<br>", unsafe_allow_html=True)
@@ -131,7 +126,7 @@ def main():
         st.markdown(
             '<div class="step-container"><div class="step-emoji">📥</div>'
             '<div class="step-title">3. Exporte et révise</div>'
-            '<div class="step-desc">PDF ou Markdown</div></div>',
+            '<div class="step-desc">PDF, DOCX ou Markdown</div></div>',
             unsafe_allow_html=True,
         )
 
@@ -141,13 +136,13 @@ def main():
     with col_a:
         st.markdown(
             '<div class="card"><h3>📝 Éditeur Markdown</h3>'
-            "<p>Éditeur professionnel avec preview en temps réel</p>"
+            "<p>Éditeur pro avec preview en temps réel et IA intégrée</p>"
             "<ul>"
-            "<li>✏️ Édition Markdown live</li>"
-            "<li>👁️ Preview à droite</li>"
-            "<li>🤖 Transformations IA (résumé, fiche, quiz)</li>"
-            "<li>📄 Export PDF avec logo</li>"
-            "<li>📥 Export Markdown illimité</li></ul>"
+            "<li>✏️ Édition live avec preview</li>"
+            "<li>📄 Import PDF → Markdown</li>"
+            "<li>🤖 6 transformations IA</li>"
+            "<li>📥 Export PDF, DOCX, MD</li>"
+            "<li>💾 Brouillon sauvegardé</li></ul>"
             '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
