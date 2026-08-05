@@ -410,7 +410,8 @@ def admin_get_stats(days: int = 7) -> dict:
         logger.error("admin_get_stats: échec activity_logs", exc_info=e)
 
     for a in actions:
-        day = (a.get("created_at") or "")[:10]
+        created = a.get("created_at")
+        day = created.strftime("%Y-%m-%d") if created else ""
         if day:
             stats["actions_by_day"][day] = stats["actions_by_day"].get(day, 0) + 1
             stats["active_users_by_day"].setdefault(day, set()).add(a.get("session_id", ""))
