@@ -48,7 +48,8 @@ def inject_css(dark_mode: bool = False):
 
 /* Hide Streamlit chrome */
 footer {{ visibility: hidden; }}
-header {{ visibility: hidden; }}
+.stDeployButton {{ display: none !important; }}
+#MainMenu {{ visibility: hidden; }}
 [data-testid="stSidebarNav"] a[href*="admin"] {{ display: none !important; }}
 
 /* Base */
