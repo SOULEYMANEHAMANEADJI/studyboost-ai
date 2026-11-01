@@ -5,6 +5,7 @@ Supporte UTF-8 (français, emojis) et Markdown.
 from __future__ import annotations
 
 import os
+from html import escape
 import re
 from io import BytesIO
 from datetime import datetime
@@ -180,7 +181,7 @@ def _parse_md_to_flowables(text: str, styles: dict) -> list:
             i += 1
             continue
 
-        line_html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
+        line_html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escape(line))
         line_html = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", line_html)
         line_html = re.sub(
             r"`(.+?)`",
@@ -200,7 +201,7 @@ def _parse_md_to_flowables(text: str, styles: dict) -> list:
         elif line.lstrip().startswith(("- ", "* ")):
             items = []
             while i < len(lines) and lines[i].lstrip().startswith(("- ", "* ")):
-                t = lines[i].lstrip()[2:]
+                t = escape(lines[i].lstrip()[2:])
                 t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
                 t = re.sub(r"`(.+?)`", r'<font name="Courier" color="#7C3AED">\1</font>', t)
                 items.append(ListItem(Paragraph(_wrap_emojis(t), styles["body"]), leftIndent=10))
@@ -211,7 +212,7 @@ def _parse_md_to_flowables(text: str, styles: dict) -> list:
         elif re.match(r"^\d+\.\s", line):
             items = []
             while i < len(lines) and re.match(r"^\d+\.\s", lines[i]):
-                t = re.sub(r"^\d+\.\s", "", lines[i])
+                t = escape(re.sub(r"^\d+\.\s", "", lines[i]))
                 t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
                 items.append(ListItem(Paragraph(_wrap_emojis(t), styles["body"]), leftIndent=10))
                 i += 1

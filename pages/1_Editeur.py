@@ -12,18 +12,19 @@ from services.ai import AVAILABLE_MODELS, StudyBoostAIError, format_text
 from services.logger import get_logger
 
 logger = get_logger("editor")
-from services.database import get_settings, get_user_quotas, increment_quota, log_activity, save_draft, load_draft
+from services.database import get_settings, get_user_quotas, log_activity, save_draft, load_draft
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.pdf_generator import markdown_to_pdf, generate_default_title
 from services.docx_generator import markdown_to_docx
-from services.pdf_reader import pdf_bytes_to_markdown, MAX_UPLOAD_SIZE_MB
+from services.pdf_reader import pdf_bytes_to_markdown, MAX_UPLOAD_SIZE_MB, MAX_PDF_PAGES, PDFImportError
+from services.quotas import reserve_quota, QuotaError
+from services.editor_state import stage_editor_text, apply_pending_editor_text, editor_value
+from services.markup import safe_markdown
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
 
 
 def _render_markdown_html(text: str) -> str:
-    import markdown as md_lib
-
-    html = md_lib.markdown(text, extensions=["fenced_code", "tables", "nl2br"])
+    html = safe_markdown(text)
 
     return """
     <style>
@@ -96,6 +97,10 @@ Commence à **écrire ton Markdown** ici ou colle ton cours.
 > 💡 Astuce : utilise les boutons IA en bas pour transformer ton texte automatiquement.
 """
 
+apply_pending_editor_text(st.session_state)
+if "_pending_doc_title" in st.session_state:
+    st.session_state["doc_title_input"] = st.session_state.pop("_pending_doc_title")
+
 with st.sidebar:
     show_user_identity_sidebar()
     st.markdown("### ⚙️ Options")
@@ -120,7 +125,7 @@ with st.sidebar:
     selected_model = AVAILABLE_MODELS[model_name]
     if st.session_state.get("preferred_model") != selected_model:
         st.session_state["preferred_model"] = selected_model
-        save_draft(user_id, st.session_state.get("editor_text", ""), model=selected_model)
+        save_draft(user_id, editor_value(st.session_state), model=selected_model)
     st.markdown("---")
 
     quotas = get_user_quotas(user_id, admin_bypass=is_admin())
@@ -160,63 +165,46 @@ st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;">
 
 has_pdf_preview = st.session_state.get("_pdf_info") is not None
 with st.expander("📄 Importer un PDF → Markdown", expanded=has_pdf_preview):
-    st.caption(f"Glissez-déposez un PDF ou cliquez pour parcourir — max {MAX_UPLOAD_SIZE_MB} Mo, texte seulement (pas scan)")
-    uploaded_pdf = st.file_uploader(
-        "Choisir un fichier PDF",
-        type=["pdf"],
-        label_visibility="collapsed",
-        key="pdf_uploader",
-    )
+    st.caption(f"PDF texte : {MAX_UPLOAD_SIZE_MB} Mo, {MAX_PDF_PAGES} pages et {MAX_CHARS:,} caractères maximum")
+    uploaded_pdf = st.file_uploader("Choisir un fichier PDF", type=["pdf"], key="pdf_uploader")
 
 if uploaded_pdf is not None:
-    if st.session_state.get("_pdf_upload_name") != uploaded_pdf.name:
-        file_size_mb = uploaded_pdf.size / (1024 * 1024)
-        if file_size_mb > MAX_UPLOAD_SIZE_MB:
-            st.error(f"❌ Fichier trop volumineux ({file_size_mb:.1f} Mo). Maximum autorisé : {MAX_UPLOAD_SIZE_MB} Mo.")
-        else:
-            with st.spinner(f"📄 Analyse de {uploaded_pdf.name}..."):
-                pdf_info = pdf_bytes_to_markdown(uploaded_pdf)
-                if pdf_info and pdf_info.text.strip():
-                    st.session_state["_pdf_info"] = pdf_info
-                    st.session_state["_pdf_upload_name"] = uploaded_pdf.name
-
+    upload_sig = hashlib.sha256(uploaded_pdf.getvalue()).hexdigest()
+    if st.session_state.get("_pdf_upload_sig") != upload_sig:
+        st.session_state.pop("_pdf_info", None)
+        st.session_state["_pdf_upload_sig"] = upload_sig
+        try:
+            with st.spinner("Analyse du PDF…"):
+                st.session_state["_pdf_info"] = pdf_bytes_to_markdown(uploaded_pdf)
+            st.session_state.pop("_pdf_error", None)
+        except PDFImportError as error:
+            st.session_state["_pdf_error"] = str(error)
+    if st.session_state.get("_pdf_error"):
+        st.warning(st.session_state["_pdf_error"])
     pdf_info = st.session_state.get("_pdf_info")
     if pdf_info:
-        st.markdown("---")
-        st.success(f"✅ **{uploaded_pdf.name}** — {pdf_info.pages} page(s) · {len(pdf_info.text):,} caractères")
-        if pdf_info.author:
-            st.caption(f"✍️ Auteur détecté : {pdf_info.author}")
-
-        st.markdown("### 👁️ Aperçu du Markdown extrait")
-        st.markdown(
-            f'<div style="height:280px;overflow-y:auto;padding:16px;'
-            f"border:1px solid var(--preview-border);border-radius:8px;background:var(--bg-main);"
-            f'font-family:monospace;font-size:0.82rem;white-space:pre-wrap;color:var(--text-main);'
-            f'">{pdf_info.text[:3000]}{"..." if len(pdf_info.text) > 3000 else ""}</div>',
-            unsafe_allow_html=True,
-        )
-
-        st.caption(f"📝 Le document sera sauvegardé sous : **{pdf_info.title}.md**")
-
-        ci1, ci2, ci3 = st.columns([1, 1, 2])
+        st.success(f"{uploaded_pdf.name} — {pdf_info.pages} page(s) · {len(pdf_info.text):,} caractères")
+        st.text(pdf_info.text[:3000])
+        ci1, ci2 = st.columns(2)
         with ci1:
-            if st.button("✅ Importer dans l'éditeur", use_container_width=True, type="primary", key="import_confirm"):
-                st.session_state["editor_text"] = pdf_info.text
-                st.session_state["doc_title"] = pdf_info.title
-                st.session_state["_last_draft"] = None
-                st.session_state.pop("_pdf_info", None)
-                st.session_state.pop("_pdf_upload_name", None)
-                save_draft(user_id, pdf_info.text)
-                increment_quota(user_id, "pdf")
-                log_activity(user_id, "pdf_import", uploaded_pdf.name)
-                st.rerun()
+            if st.button("✅ Importer dans l'éditeur", type="primary", key="import_confirm"):
+                try:
+                    reserve_quota(user_id, "pdf", admin_bypass=is_admin())
+                    stage_editor_text(st.session_state, pdf_info.text)
+                    st.session_state["doc_title"] = pdf_info.title
+                    st.session_state["_pending_doc_title"] = pdf_info.title
+                    st.session_state.pop("_pdf_info", None)
+                    log_activity(user_id, "pdf_import")
+                    st.rerun()
+                except QuotaError as error:
+                    st.error(str(error))
         with ci2:
-            if st.button("❌ Annuler", use_container_width=True, key="import_cancel"):
+            if st.button("❌ Annuler", key="import_cancel"):
                 st.session_state.pop("_pdf_info", None)
-                st.session_state.pop("_pdf_upload_name", None)
                 st.rerun()
-
-st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
+else:
+    for key in ("_pdf_info", "_pdf_upload_sig", "_pdf_error"):
+        st.session_state.pop(key, None)
 
 col_editor, col_preview = st.columns([1, 1], gap="medium")
 
@@ -227,16 +215,20 @@ with col_editor:
         '<span style="color:#94A3B8;font-size:0.85rem;">— Markdown</span></div>',
         unsafe_allow_html=True,
     )
+    if "editor_textarea" not in st.session_state:
+        st.session_state["editor_textarea"] = st.session_state["editor_text"]
     editor_text = st.text_area(
-        "Éditeur", value=st.session_state["editor_text"],
+        "Éditeur",
         height=550, max_chars=MAX_CHARS,
         label_visibility="collapsed", key="editor_textarea",
         placeholder="Tape ou colle ton Markdown ici...",
     )
     st.session_state["editor_text"] = editor_text
     if st.session_state.get("_last_draft") != editor_text:
-        save_draft(user_id, editor_text)
-        st.session_state["_last_draft"] = editor_text
+        if save_draft(user_id, editor_text):
+            st.session_state["_last_draft"] = editor_text
+    if st.session_state.get("_last_draft") == editor_text:
+        st.caption("Brouillon sauvegardé")
     chars = len(editor_text)
     words = len(editor_text.split())
     pct = (chars / MAX_CHARS) * 100
@@ -299,8 +291,6 @@ with col_dl2:
     else:
         if settings.get("feature_pdf_enabled", "true") != "true":
             st.warning("⚠️ Export PDF temporairement désactivé")
-        elif quotas and quotas["pdf"]["used"] >= quotas["pdf"]["limit"]:
-            st.error(f"❌ Limite atteinte ({quotas['pdf']['limit']} PDF/jour). Reviens demain !")
         else:
             logo_choice = st.radio(
                 "Logo", ["Avec logo", "Sans logo"],
@@ -311,26 +301,29 @@ with col_dl2:
 
             _sig = f"{hashlib.md5(editor_text.encode()).hexdigest()}_{doc_title}_{with_logo}"
             if st.session_state.get("_pdf_sig") != _sig:
-                with st.spinner("📄 Génération du PDF..."):
-                    st.session_state["_pdf_bytes"] = markdown_to_pdf(
-                        text=editor_text, title=doc_title,
-                        logo_path="assets/logo.png" if with_logo else None,
-                        neutral=not with_logo,
-                    )
-                st.session_state["_pdf_sig"] = _sig
-                st.session_state["_pdf_charged"] = False
-
-            st.download_button(
-                "⬇️ Télécharger",
-                data=st.session_state["_pdf_bytes"],
-                file_name=f"{doc_title}.pdf",
-                mime="application/pdf",
-                use_container_width=True, type="primary",
-                on_click=lambda: (
-                    increment_quota(user_id, "pdf"),
-                    log_activity(user_id, "pdf_export", doc_title),
-                ),
-            )
+                if st.button("Préparer le PDF", type="primary", key="prepare_pdf"):
+                    try:
+                        reserve_quota(user_id, "pdf", admin_bypass=is_admin())
+                        with st.spinner("Génération du PDF…"):
+                            pdf_bytes = markdown_to_pdf(
+                                text=editor_text, title=doc_title,
+                                logo_path="assets/logo.png" if with_logo else None,
+                                neutral=not with_logo,
+                            )
+                        st.session_state["_pdf_bytes"] = pdf_bytes
+                        st.session_state["_pdf_sig"] = _sig
+                        log_activity(user_id, "pdf_export")
+                    except QuotaError as error:
+                        st.error(str(error))
+                    except Exception as error:
+                        logger.warning("PDF generation failed type=%s", type(error).__name__)
+                        st.error("Impossible de préparer ce PDF. Ton texte reste dans l'éditeur.")
+            if st.session_state.get("_pdf_sig") == _sig:
+                st.download_button(
+                    "⬇️ Télécharger", data=st.session_state["_pdf_bytes"],
+                    file_name=f"{doc_title}.pdf", mime="application/pdf",
+                    use_container_width=True, type="primary",
+                )
 
 st.markdown(
     '<div style="margin:30px 0 10px 0;border-top:1px solid #E2E8F0;padding-top:20px;"></div>',
@@ -365,13 +358,17 @@ for col, (label, action) in zip(cols, ia_actions):
                 with st.spinner(f"✨ {label} en cours..."):
                     start = time.time()
                     try:
+                        reserve_quota(user_id, "ai", model=selected_model, admin_bypass=is_admin())
                         result = format_text(editor_text, action, model=selected_model)
                         elapsed = time.time() - start
-                        st.session_state["editor_text"] = result
-                        increment_quota(user_id, "ai")
+                        if len(result) > MAX_CHARS:
+                            raise StudyBoostAIError("La réponse dépasse la taille de l'éditeur. Demande une version plus courte.", "validation")
+                        stage_editor_text(st.session_state, result)
                         log_activity(user_id, f"ai_{action}", selected_model)
                         st.success(f"✅ {label} terminé en {elapsed:.1f}s")
                         st.rerun()
+                    except QuotaError as e:
+                        st.error(str(e))
                     except StudyBoostAIError as e:
                         show_ai_error(e, model_name.split(" (")[0], action)
                     except Exception as e:

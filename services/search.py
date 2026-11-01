@@ -20,7 +20,7 @@ def search_web(query: str, max_results: int = 5) -> list[dict[str, str]]:
                     "body": r.get("body", ""),
                 })
     except Exception as e:
-        logger.error("search_web: échec recherche pour « %s »", query[:80], exc_info=e)
+        logger.error("Web search failed type=%s", type(e).__name__)
         return []
     return results
 

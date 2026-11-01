@@ -106,7 +106,7 @@ def _api_error(status: int) -> StudyBoostAIError:
     return StudyBoostAIError(message, code)
 
 
-def _call_openrouter(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, max_retries=2):
+def _call_openrouter(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, max_retries=0):
     key = _get_key("OPENROUTER_API_KEY")
     # Never route to a paid model, including through a stale saved preference.
     if model not in AVAILABLE_MODELS.values():
@@ -194,7 +194,8 @@ def chat_response(context: str, question: str, history: list, model: str = DEFAU
         messages.append({"role": "user", "content": f"Voici mon cours (contexte) :\n\n{context[:8000]}"})
     else:
         messages.append({"role": "system", "content": "Tu réponds comme assistant général sans contexte spécifique."})
-    for msg in history[-10:]:
+    prior = history[:-1] if history and history[-1].get("role") == "user" and history[-1].get("content") == question else history
+    for msg in prior[-10:]:
         messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
     messages.append({"role": "user", "content": question})
     return _call_openrouter(messages, model=model, temperature=0.4)
@@ -229,6 +230,6 @@ def _fmt_results(results):
     if not results:
         return "Aucun résultat trouvé."
     return "\n\n".join(
-        f"{i}. {r.get('title', 'Sans titre')}\n   {r.get('body', '')[:300]}"
+        f"{i}. {r.get('title', 'Sans titre')}\n   URL : {r.get('href', '')}\n   {r.get('body', '')[:300]}"
         for i, r in enumerate(results, 1)
     )

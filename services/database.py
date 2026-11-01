@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import threading
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
@@ -28,27 +30,76 @@ def _get_db_url() -> str:
     return url
 
 
+class ManagedPool:
+    """Bound wait time and validate idle connections before handing them out."""
+    def __init__(self, url, maximum=10, wait_seconds=3):
+        self.raw = psycopg2.pool.ThreadedConnectionPool(
+            1, maximum, url, connect_timeout=10,
+            options="-c statement_timeout=10000 -c lock_timeout=3000",
+        )
+        self.slots = threading.BoundedSemaphore(maximum)
+        self.lock = threading.Lock()
+        self.borrowed = set()
+        self.wait_seconds = wait_seconds
+
+    def getconn(self):
+        if not self.slots.acquire(timeout=self.wait_seconds):
+            raise RuntimeError("Database busy: retry later")
+        try:
+            for attempt in range(2):
+                conn = self.raw.getconn()
+                try:
+                    with conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1")
+                    with self.lock:
+                        self.borrowed.add(id(conn))
+                    return conn
+                except (psycopg2.OperationalError, psycopg2.InterfaceError):
+                    self.raw.putconn(conn, close=True)
+                    if attempt:
+                        raise
+                except Exception:
+                    self.raw.putconn(conn, close=True)
+                    raise
+        except BaseException:
+            self.slots.release()
+            raise
+
+    def putconn(self, conn):
+        with self.lock:
+            if id(conn) not in self.borrowed:
+                raise RuntimeError("Connection already released")
+            self.borrowed.remove(id(conn))
+        try:
+            self.raw.putconn(conn, close=bool(conn.closed))
+        finally:
+            self.slots.release()
+
+
 @st.cache_resource
 def _get_pool():
     url = _get_db_url()
-    return psycopg2.pool.ThreadedConnectionPool(1, 10, url, connect_timeout=15)
+    parsed = urlsplit(url)
+    query = dict(parse_qsl(parsed.query))
+    query.setdefault("sslmode", "require")
+    url = urlunsplit(parsed._replace(query=urlencode(query)))
+    return ManagedPool(url)
 
 
 def get_db():
-    pool = _get_pool()
-    return pool.getconn()
+    return _get_pool().getconn()
 
 
 def release_db(conn):
     try:
         _get_pool().putconn(conn)
-    except Exception:
-        pass
+    except Exception as error:
+        logger.error("Connection release failed type=%s", type(error).__name__)
 
 
 def _fetchone(query: str, params: tuple | None = None) -> dict | None:
-    pool = _get_pool()
-    conn = pool.getconn()
+    conn = get_db()
     try:
         with conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -56,30 +107,29 @@ def _fetchone(query: str, params: tuple | None = None) -> dict | None:
                 row = cur.fetchone()
                 return dict(row) if row else None
     finally:
-        pool.putconn(conn)
+        release_db(conn)
 
 
 def _fetchall(query: str, params: tuple | None = None) -> list[dict]:
-    pool = _get_pool()
-    conn = pool.getconn()
+    conn = get_db()
     try:
         with conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(query, params)
                 return [dict(r) for r in cur.fetchall()]
     finally:
-        pool.putconn(conn)
+        release_db(conn)
 
 
-def _execute(query: str, params: tuple | None = None) -> None:
-    pool = _get_pool()
-    conn = pool.getconn()
+def _execute(query: str, params: tuple | None = None) -> int:
+    conn = get_db()
     try:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(query, params)
+                return cur.rowcount
     finally:
-        pool.putconn(conn)
+        release_db(conn)
 
 
 def check_database_health() -> bool:
@@ -92,11 +142,11 @@ def check_database_health() -> bool:
                 cur.execute("SELECT 1")
                 cur.fetchone()
                 for query in (
-                    "SELECT id, alias_display, last_active, quota_date, draft_text, preferred_model FROM sessions LIMIT 0",
+                    "SELECT id, alias_emoji, alias_animal, alias_adjective, alias_number, alias_display, pdf_count, chat_count, search_count, ai_count, last_active, created_at, quota_date, draft_text, preferred_model FROM sessions LIMIT 0",
                     "SELECT session_id, role, content, created_at FROM chat_history LIMIT 0",
                     "SELECT key, value FROM admin_settings LIMIT 0",
-                    "SELECT session_id, action_type FROM activity_logs LIMIT 0",
-                    "SELECT session_id, rating FROM feedbacks LIMIT 0",
+                    "SELECT session_id, action_type, action_detail, created_at FROM activity_logs LIMIT 0",
+                    "SELECT session_id, rating, comment, feature_request, other_idea, email, created_at FROM feedbacks LIMIT 0",
                 ):
                     cur.execute(query)
         return True
@@ -125,6 +175,9 @@ DEFAULT_SETTINGS = {
     "quota_ai_per_day": "15",
     "global_message": "",
     "retention_days": "7",
+    "quota_ai_global_per_day": "50",
+    "quota_ai_global_per_minute": "20",
+    "quota_ai_user_per_minute": "3",
 }
 
 
@@ -174,102 +227,25 @@ def _quota_date_today() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _maybe_reset_quotas(user_id: str) -> bool:
-    today = _quota_date_today()
+def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict:
+    settings = get_settings()
     try:
         row = _fetchone(
-            "SELECT quota_date FROM sessions WHERE id = %s", (user_id,)
+            "SELECT pdf_count, chat_count, search_count, ai_count, quota_date FROM sessions WHERE id=%s", (user_id,)
         )
         if not row:
-            _ensure_session_exists(user_id)
-            return False
-        if row.get("quota_date") != today:
-            _execute(
-                "UPDATE sessions SET pdf_count=0, chat_count=0, search_count=0, "
-                "ai_count=0, quota_date=%s, last_active=NOW() WHERE id=%s",
-                (today, user_id),
-            )
-            return True
-    except Exception as e:
-        logger.warning("_maybe_reset_quotas: échec pour %s", user_id, exc_info=e)
-    return False
-
-
-def _ensure_session_exists(user_id: str):
-    try:
-        _execute(
-            "INSERT INTO sessions (id, quota_date, created_at, last_active) "
-            "VALUES (%s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-            (user_id, _quota_date_today()),
-        )
-    except Exception as e:
-        logger.warning("_ensure_session_exists: échec pour %s", user_id, exc_info=e)
-
-
-def get_user_quotas(user_id: str, admin_bypass: bool = False) -> dict:
-    if admin_bypass:
+            raise RuntimeError("Session missing")
+        today = _quota_date_today()
         return {
-            "pdf": {"used": 0, "limit": 9999},
-            "chat": {"used": 0, "limit": 9999},
-            "search": {"used": 0, "limit": 9999},
-            "ai": {"used": 0, "limit": 9999},
+            kind: {
+                "used": int(row.get(kind + "_count") or 0) if row.get("quota_date") == today else 0,
+                "limit": 9999 if admin_bypass else int(settings.get("quota_" + kind + "_per_day", default)),
+            }
+            for kind, default in (("pdf", 10), ("chat", 20), ("search", 10), ("ai", 15))
         }
-
-    _fallback = {
-        "pdf": {"used": 0, "limit": 2},
-        "chat": {"used": 0, "limit": 3},
-        "search": {"used": 0, "limit": 1},
-        "ai": {"used": 0, "limit": 2},
-        "_fallback": True,
-    }
-
-    settings = get_settings()
-    _maybe_reset_quotas(user_id)
-
-    try:
-        row = _fetchone(
-            "SELECT pdf_count, chat_count, search_count, ai_count FROM sessions WHERE id = %s",
-            (user_id,),
-        )
-    except Exception as e:
-        logger.error("get_user_quotas: échec pour %s — fallback actif", user_id, exc_info=e)
-        return _fallback
-
-    if not row:
-        return _fallback
-
-    return {
-        "pdf": {
-            "used": row.get("pdf_count", 0) or 0,
-            "limit": int(settings.get("quota_pdf_per_day", 10)),
-        },
-        "chat": {
-            "used": row.get("chat_count", 0) or 0,
-            "limit": int(settings.get("quota_chat_per_day", 20)),
-        },
-        "search": {
-            "used": row.get("search_count", 0) or 0,
-            "limit": int(settings.get("quota_search_per_day", 10)),
-        },
-        "ai": {
-            "used": row.get("ai_count", 0) or 0,
-            "limit": int(settings.get("quota_ai_per_day", 15)),
-        },
-    }
-
-
-def increment_quota(user_id: str, quota_type: str):
-    col = f"{quota_type}_count"
-    today = _quota_date_today()
-
-    try:
-        _execute(
-            f"UPDATE sessions SET {col} = COALESCE({col}, 0) + 1, "
-            "quota_date = %s, last_active = NOW() WHERE id = %s",
-            (today, user_id),
-        )
-    except Exception as e:
-        logger.error("increment_quota: échec pour %s/%s", user_id, quota_type, exc_info=e)
+    except Exception as error:
+        logger.error("Quota display failed type=%s", type(error).__name__)
+        return {**{kind: {"used": 0, "limit": 0} for kind in ("pdf", "chat", "search", "ai")}, "_fallback": True}
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +257,7 @@ def log_activity(user_id: str, action_type: str, detail: str = ""):
         _execute(
             "INSERT INTO activity_logs (session_id, action_type, action_detail, created_at) "
             "VALUES (%s, %s, %s, NOW())",
-            (user_id, action_type, detail[:500]),
+            (user_id, action_type, ""),
         )
     except Exception as e:
         logger.warning("log_activity: échec pour %s / %s", user_id, action_type, exc_info=e)
@@ -296,7 +272,7 @@ def save_chat_message(user_id: str, role: str, content: str):
         _execute(
             "INSERT INTO chat_history (session_id, role, content, created_at) "
             "VALUES (%s, %s, %s, NOW())",
-            (user_id, role, content[:5000]),
+            (user_id, role, content[:15000]),
         )
     except Exception as e:
         logger.error("save_chat_message failed type=%s", type(e).__name__)
@@ -306,7 +282,7 @@ def save_chat_message(user_id: str, role: str, content: str):
 def get_chat_history(user_id: str) -> list:
     try:
         return _fetchall(
-            "SELECT role, content FROM chat_history WHERE session_id = %s ORDER BY created_at",
+            "SELECT role, content FROM (SELECT id, role, content, created_at FROM chat_history WHERE session_id = %s ORDER BY created_at DESC, id DESC LIMIT 100) recent ORDER BY created_at, id",
             (user_id,),
         )
     except Exception as e:
@@ -326,22 +302,26 @@ def clear_chat_history(user_id: str):
 # Draft persistence (éditeur)
 # ---------------------------------------------------------------------------
 
-def save_draft(user_id: str, text: str, model: str | None = None):
+def save_draft(user_id: str, text: str, model: str | None = None) -> bool:
     try:
         if model:
-            _execute(
+            changed = _execute(
                 "UPDATE sessions SET draft_text=%s, preferred_model=%s, last_active=NOW() WHERE id=%s",
                 (text[:15000], model, user_id),
             )
         else:
-            _execute(
+            changed = _execute(
                 "UPDATE sessions SET draft_text=%s, last_active=NOW() WHERE id=%s",
                 (text[:15000], user_id),
             )
+        if changed != 1:
+            raise RuntimeError("Session missing during draft save")
     except Exception as e:
         logger.warning("save_draft failed type=%s", type(e).__name__)
         st.error("Le brouillon n'a pas été sauvegardé en base. Réessaie avant de fermer cette page.")
+        return False
     load_draft.clear()
+    return True
 
 
 @st.cache_data(ttl=5)
@@ -402,6 +382,11 @@ def cleanup_old_data(force: bool = False):
         _execute("DELETE FROM sessions WHERE last_active < %s", (cutoff,))
     except Exception as e:
         logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
+
+    try:
+        _execute("DELETE FROM admin_settings WHERE key LIKE 'ai_usage:%%' AND key < %s", ("ai_usage:" + cutoff[:10],))
+    except Exception as error:
+        logger.warning("Quota history cleanup failed type=%s", type(error).__name__)
 
     if force:
         try:

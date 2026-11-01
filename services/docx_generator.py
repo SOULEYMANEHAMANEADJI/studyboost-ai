@@ -77,14 +77,14 @@ def markdown_to_docx(text: str, title: str | None = None) -> bytes:
         elif line.lstrip().startswith(("- ", "* ")):
             while i < len(lines) and lines[i].lstrip().startswith(("- ", "* ")):
                 item = lines[i].lstrip()[2:]
-                p = doc.add_paragraph(item, style="List Bullet")
+                p = doc.add_paragraph(style="List Bullet")
                 _apply_inline_format(p, item)
                 i += 1
             continue
         elif re.match(r"^\d+\.\s", line):
             while i < len(lines) and re.match(r"^\d+\.\s", lines[i]):
                 item = re.sub(r"^\d+\.\s", "", lines[i])
-                p = doc.add_paragraph(item, style="List Number")
+                p = doc.add_paragraph(style="List Number")
                 _apply_inline_format(p, item)
                 i += 1
             continue
@@ -119,5 +119,5 @@ def _apply_inline_format(paragraph, text: str):
             run.font.name = "Consolas"
             run.font.size = Pt(10)
             run.font.color.rgb = RGBColor(0x7C, 0x3A, 0xED)
-        elif part.strip():
+        elif part:
             run = paragraph.add_run(part)

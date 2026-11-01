@@ -7,11 +7,12 @@ from version import VERSION
 from services.ai import AVAILABLE_MODELS, StudyBoostAIError, chat_response, chat_with_search
 from services.database import (
     get_settings, log_activity, save_chat_message,
-    get_chat_history, clear_chat_history, get_user_quotas, increment_quota,
+    get_chat_history, clear_chat_history, get_user_quotas,
 )
 from services.identity import get_user_id, init_user_identity, is_admin
 from services.search import search_web, format_results
 from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quota_sidebar, show_ai_error
+from services.quotas import reserve_quota, QuotaError
 from services.logger import get_logger
 
 logger = get_logger("chat")
@@ -97,6 +98,8 @@ def main():
         if st.button("🗑️ Nouvelle conversation", use_container_width=True):
             clear_chat_history(user_id)
             st.session_state["messages"] = []
+            st.session_state.pop("_failed_question", None)
+            st.session_state.pop("_retry_prompt", None)
             st.rerun()
 
     st.markdown("<h1 class='gradient-title'>💬 Chat IA</h1>", unsafe_allow_html=True)
@@ -128,15 +131,19 @@ def main():
     if chat_disabled:
         st.error(f"❌ Limite de messages atteinte ({quotas['chat']['used']}/{quotas['chat']['limit']}). Reviens demain !")
 
-    if prompt := st.chat_input("Pose ta question…", disabled=chat_disabled):
+    entered_prompt = st.chat_input("Pose ta question…", disabled=chat_disabled)
+    retry_prompt = st.session_state.pop("_retry_prompt", None)
+    prompt = entered_prompt or retry_prompt
+    if prompt and not chat_disabled:
         if len(prompt) > 5000:
             st.error("❌ Message trop long (5000 caractères max).")
             st.stop()
 
-        st.session_state["messages"].append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        save_chat_message(user_id, "user", prompt)
+        if entered_prompt:
+            st.session_state["messages"].append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            save_chat_message(user_id, "user", prompt)
 
         wants_search = web_search or any(kw in prompt.lower() for kw in SEARCH_KEYWORDS)
         used_search_quota = False
@@ -145,12 +152,17 @@ def main():
             with st.spinner("🤔 Réflexion en cours…"):
                 start = time.time()
                 try:
+                    reserve_quota(user_id, "chat", model=selected_model, admin_bypass=is_admin())
                     if wants_search and search_enabled and quotas and max(0, quotas["search"]["limit"] - quotas["search"]["used"]) > 0:
-                        results = search_web(prompt)
+                        try:
+                            reserve_quota(user_id, "search", admin_bypass=is_admin())
+                            results = search_web(prompt)
+                        except QuotaError as error:
+                            st.info(str(error))
+                            results = []
                         if results:
                             with st.expander("🔍 Sources web consultées"):
                                 st.markdown(format_results(results))
-                            increment_quota(user_id, "search")
                             used_search_quota = True
                             response = chat_with_search(prompt, results, context_text, model=selected_model)
                         else:
@@ -163,17 +175,26 @@ def main():
                     if not response.strip():
                         response = "🤔 L'IA n'a pas pu générer de réponse. Reformule ta question."
 
+                    st.session_state.pop("_failed_question", None)
                     st.markdown(response)
                     elapsed = time.time() - start
-                    increment_quota(user_id, "chat")
                     st.session_state["messages"].append({"role": "assistant", "content": response})
                     save_chat_message(user_id, "assistant", response)
                     log_activity(user_id, "chat_search" if used_search_quota else "chat", prompt[:100])
+                except QuotaError as e:
+                    st.error(str(e))
                 except StudyBoostAIError as e:
                     show_ai_error(e, selected_model, "chat")
+                    if getattr(e, "code", "") not in ("auth", "config", "rate_limit", "credits"):
+                        st.session_state["_failed_question"] = prompt
                 except Exception as e:
                     logger.warning("Erreur inattendue chat: %s", e)
                     st.error("❌ Une erreur inattendue s'est produite.")
+
+    if st.session_state.get("_failed_question"):
+        if st.button("Réessayer la dernière question", key="retry_chat_question", disabled=chat_disabled):
+            st.session_state["_retry_prompt"] = st.session_state.pop("_failed_question")
+            st.rerun()
 
     st.markdown(
         f'<div style="text-align:center;color:#94A3B8;font-size:0.75rem;margin-top:2rem;">'

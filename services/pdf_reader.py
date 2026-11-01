@@ -7,9 +7,17 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-import fitz
+import pymupdf as fitz
 
 _BULLET_RE = re.compile(r"^\s*[•\-▪▸►○●◆◇☑☒✓✔✗✘\*]\s*")
+
+MAX_PDF_PAGES = 50
+MAX_EXTRACTED_CHARS = 15000
+
+
+class PDFImportError(ValueError):
+    pass
+
 
 MAX_UPLOAD_SIZE_MB = 5
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
@@ -24,32 +32,42 @@ class PDFInfo:
 
 
 def extract_pdf_info(pdf_bytes: bytes, filename: str = "") -> PDFInfo:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    meta = doc.metadata or {}
-
-    title = (meta.get("title") or "").strip()
-    author = (meta.get("author") or "").strip()
-    pages = doc.page_count
-
-    if not title:
-        if filename:
-            title = re.sub(r"\.pdf$", "", filename, flags=re.IGNORECASE).strip()
-        else:
-            title = f"Document_{datetime.now().strftime('%Y%m%d_%H%M')}"
-
-    title = title[:100]
-
-    text = extract_text_from_pdf(pdf_bytes, doc)
-    doc.close()
-    return PDFInfo(text=text, title=title, author=author, pages=pages)
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            if doc.needs_pass:
+                raise PDFImportError("Ce PDF est protégé par un mot de passe.")
+            if doc.page_count > MAX_PDF_PAGES:
+                raise PDFImportError(f"Le PDF dépasse {MAX_PDF_PAGES} pages. Importe un extrait plus court.")
+            meta = doc.metadata or {}
+            title = (meta.get("title") or "").strip()
+            if not title:
+                title = re.sub(r"\.pdf$", "", filename, flags=re.IGNORECASE).strip() if filename else f"Document_{datetime.now().strftime('%Y%m%d_%H%M')}"
+            text = extract_text_from_pdf(pdf_bytes, doc)
+            if not text.strip():
+                raise PDFImportError("Aucun texte détecté. Les PDF scannés nécessitent une reconnaissance OCR.")
+            return PDFInfo(text, title[:100], (meta.get("author") or "").strip(), doc.page_count)
+    except PDFImportError:
+        raise
+    except Exception:
+        raise PDFImportError("Ce fichier PDF est invalide ou illisible. Essaie un autre fichier.") from None
 
 
 def extract_text_from_pdf(pdf_bytes: bytes, doc=None) -> str:
     own_doc = doc is None
     if own_doc:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    lines = []
+    try:
+        if doc.page_count > MAX_PDF_PAGES:
+            raise PDFImportError(f"Le PDF dépasse {MAX_PDF_PAGES} pages.")
+        return _extract_document(doc)
+    finally:
+        if own_doc:
+            doc.close()
 
+
+def _extract_document(doc) -> str:
+    lines = []
+    total_chars = 0
     for page in doc:
         for block in page.get_text("dict")["blocks"]:
             if block["type"] != 0:
@@ -88,10 +106,10 @@ def extract_text_from_pdf(pdf_bytes: bytes, doc=None) -> str:
                     cleaned_line = _BULLET_RE.sub("", line_text)
                     line_text = f"- {cleaned_line}"
 
+                total_chars += len(line_text) + 1
+                if total_chars > MAX_EXTRACTED_CHARS:
+                    raise PDFImportError(f"Le texte dépasse {MAX_EXTRACTED_CHARS:,} caractères. Importe un extrait plus court.")
                 lines.append(line_text)
-
-    if own_doc:
-        doc.close()
     return _cleanup_text("\n".join(lines))
 
 
@@ -107,19 +125,10 @@ def _cleanup_text(text: str) -> str:
     return "\n".join(cleaned).strip()
 
 
-def pdf_bytes_to_markdown(uploaded_file) -> PDFInfo | None:
-    pdf_bytes = uploaded_file.read()
-    if not pdf_bytes:
-        return None
-
+def pdf_bytes_to_markdown(uploaded_file) -> PDFInfo:
+    pdf_bytes = uploaded_file.getvalue()
+    if not pdf_bytes or pdf_bytes[:4] != b"%PDF":
+        raise PDFImportError("Sélectionne un fichier PDF valide.")
     if len(pdf_bytes) > MAX_UPLOAD_SIZE_BYTES:
-        return None
-
-    if pdf_bytes[:4] != b"%PDF":
-        return None
-
-    info = extract_pdf_info(pdf_bytes, uploaded_file.name)
-    if not info.text.strip():
-        return None
-
-    return info
+        raise PDFImportError(f"Le fichier dépasse {MAX_UPLOAD_SIZE_MB} Mo.")
+    return extract_pdf_info(pdf_bytes, uploaded_file.name)

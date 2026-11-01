@@ -94,7 +94,7 @@ class OpenRouterTests(unittest.TestCase):
                 raise HTTPError("https://openrouter.ai", 503, "unavailable", {}, io.BytesIO())
             return self.response({"choices": [{"message": {"content": "OK"}}]})
         with patch.dict(self.env, {"urlopen": send, "time": types.SimpleNamespace(sleep=lambda seconds: None)}):
-            self.assertEqual(self.call([]), "OK")
+            self.assertEqual(self.call([], max_retries=2), "OK")
         self.assertEqual(len(calls), 2)
 
 

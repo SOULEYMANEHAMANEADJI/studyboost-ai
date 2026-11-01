@@ -194,6 +194,19 @@ def main():
             st.success("Quotas mis à jour !")
 
         st.markdown("---")
+        st.markdown("### Protection du budget IA partagé")
+        global_daily = st.number_input("Demandes IA maximum par jour pour toute l'application", 0, 10000, int(settings.get("quota_ai_global_per_day", "50")), key="global_ai_day")
+        global_minute = st.number_input("Demandes IA maximum par minute pour toute l'application", 0, 100, int(settings.get("quota_ai_global_per_minute", "20")), key="global_ai_minute")
+        user_minute = st.number_input("Demandes IA maximum par minute et par espace", 0, 20, int(settings.get("quota_ai_user_per_minute", "3")), key="user_ai_minute")
+        st.caption("Ces plafonds comptent les tentatives, y compris les appels refusés par le fournisseur. Le plafond global s'applique aussi aux administrateurs.")
+        if st.button("Enregistrer les protections IA", key="save_global_ai"):
+            results = [
+                update_setting("quota_ai_global_per_day", global_daily),
+                update_setting("quota_ai_global_per_minute", global_minute),
+                update_setting("quota_ai_user_per_minute", user_minute),
+            ]
+            if all(results): st.success("Protections IA enregistrées.")
+        st.markdown("---")
         st.markdown("### 📢 Message global")
         msg = settings.get("global_message", "")
         new_msg = st.text_area("Message affiché sur l'accueil", value=msg, height=80)

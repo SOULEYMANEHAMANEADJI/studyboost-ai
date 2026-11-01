@@ -342,7 +342,7 @@ def show_quota_sidebar(quotas: dict | None = None):
         return
 
     if quotas.get("_fallback"):
-        st.warning("⚠️ Quotas en mode dégradé — limites réduites temporairement.")
+        st.warning("⚠️ Vérification des quotas indisponible — actions temporairement suspendues.")
 
     st.markdown("### 📊 Quotas du jour")
     items = [
@@ -394,5 +394,3 @@ def show_ai_error(e: Exception, model_name: str, action: str):
 - Si le quota OpenRouter est atteint, attends sa réinitialisation
 - Réduis la taille du texte
 """)
-    if st.button("🔄 Réessayer", key=f"retry_{action}"):
-        st.rerun()
