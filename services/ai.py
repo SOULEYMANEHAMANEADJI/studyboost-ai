@@ -27,6 +27,8 @@ class StudyBoostAIError(RuntimeError):
 
 AVAILABLE_MODELS = {
     "🆓 OpenRouter — sélection gratuite automatique": "openrouter/free",
+    "🟢 Google Gemma 4 31B — gratuit": "google/gemma-4-31b-it:free",
+    "🟢 NVIDIA Nemotron 3.5 Lightning — gratuit": "nvidia/nemotron-3.5-lightning:free",
 }
 
 DEFAULT_MODEL = "openrouter/free"

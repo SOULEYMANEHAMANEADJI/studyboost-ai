@@ -41,6 +41,18 @@ class OpenRouterTests(unittest.TestCase):
         with patch.dict(self.env, {"urlopen": send}):
             self.assertEqual(self.call([]), "Bonjour")
 
+    def test_each_menu_model_is_sent_unchanged(self):
+        models = self.api["AVAILABLE_MODELS"]
+        self.assertGreaterEqual(len(models), 3)
+        for model in models.values():
+            with self.subTest(model=model):
+                self.assertTrue(model == "openrouter/free" or model.endswith(":free"))
+                def send(request, timeout):
+                    self.assertEqual(json.loads(request.data)["model"], model)
+                    return self.response({"choices": [{"message": {"content": "OK"}}]})
+                with patch.dict(self.env, {"urlopen": send}):
+                    self.assertEqual(self.call([], model=model), "OK")
+
     def test_http_errors(self):
         for status, code in [(400,"bad_request"),(401,"auth"),(402,"credits"),(403,"permission"),(404,"model_unavailable"),(429,"rate_limit")]:
             with self.subTest(status=status):

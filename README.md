@@ -43,7 +43,7 @@ ADMIN_PASSWORD = "ton_mot_de_passe_admin"
 
 Conserve tes valeurs de base de données et d'administration existantes. La clé Groq n'est plus utilisée. Enregistre les secrets puis redémarre l'application après le déploiement du nouveau code. Ne mets jamais de vraie clé dans GitHub.
 
-Le modèle `openrouter/free` sélectionne automatiquement un modèle gratuit disponible. Le quota OpenRouter est partagé entre tous les utilisateurs et reste distinct des quotas affichés dans l'application. La disponibilité et les limites gratuites dépendent d'OpenRouter. Les erreurs techniques apparaissent aussi dans les logs Streamlit Cloud.
+Le menu du chat et de l’éditeur permet de choisir Google Gemma 4 31B, NVIDIA Nemotron 3.5 Lightning (variantes `:free`) ou la sélection automatique `openrouter/free`. Le modèle sélectionné est envoyé à OpenRouter pour les prochaines demandes. Le quota OpenRouter est partagé entre tous les utilisateurs et reste distinct des quotas affichés dans l'application. La disponibilité et les limites gratuites dépendent d'OpenRouter. Les erreurs techniques apparaissent aussi dans les logs Streamlit Cloud.
 
 ## Licence
 
