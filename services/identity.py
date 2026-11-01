@@ -1,24 +1,27 @@
-"""
-Gestion de l'identité anonyme persistante via st.session_state + URL.
-Chaque onglet/navigateur reçoit SA propre identité.
-Pas de cookies (partagés entre onglets d'un même navigateur).
-"""
+"""Browser-owned anonymous identity. URL parameters never grant access."""
 from __future__ import annotations
 
+import hashlib
 import random
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import psycopg2.extras
 import streamlit as st
-
+from streamlit.components.v1 import declare_component
 from services.logger import get_logger
 
 logger = get_logger("identity")
+_browser_identity = declare_component(
+    "studyboost_browser_identity", path=str(Path(__file__).parent / "identity_component")
+)
 
 
 def is_admin() -> bool:
     return st.session_state.get("admin_auth", False)
+
 
 ANIMALS = [
     ("🐼", "Panda"), ("🦊", "Renard"), ("🦉", "Hibou"),
@@ -49,114 +52,109 @@ def generate_alias() -> dict:
     }
 
 
+def _clear_user_state():
+    # Includes editor widgets, exports, chat context and admin authentication.
+    for key in list(st.session_state.keys()):
+        if key not in ("browser_identity", "identity_rotation"):
+            del st.session_state[key]
+
+
 def init_user_identity():
-    """Initialise ou restaure l'identité anonyme de l'utilisateur."""
-    from services.database import get_db, release_db
+    from services.database import get_db, release_db, get_settings
 
-    if "user_data" in st.session_state:
-        return st.session_state["user_data"]
+    # Legacy shared links must never restore someone else's session.
+    if "sid" in st.query_params:
+        del st.query_params["sid"]
+    rotation = st.session_state.get("identity_rotation", "")
+    value = _browser_identity(rotation=rotation, key="browser_identity", default=None)
+    if not isinstance(value, dict) or value.get("rotation") != rotation:
+        st.info("Initialisation de ton espace privé…")
+        st.stop()
+    if value.get("error"):
+        st.error("Le stockage du navigateur est bloqué. Autorise le stockage pour conserver un espace privé, puis recharge la page.")
+        st.stop()
+    token = value.get("token", "")
+    if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{64}", token):
+        st.error("Identité du navigateur invalide. Recharge la page.")
+        st.stop()
+    # Only a one-way digest is persisted; knowing a database ID is not sufficient.
+    user_id = hashlib.sha256(token.encode("ascii")).hexdigest()
+    current = st.session_state.get("user_data")
+    if current and current.get("id") != user_id:
+        _clear_user_state()
+        st.rerun()
+    elif current:
+        return current
 
-    sid_from_url = st.query_params.get("sid")
-    if sid_from_url:
+    db = None
+    try:
+        days = int(get_settings().get("retention_days", "7"))
         db = get_db()
-        try:
-            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute("SELECT * FROM sessions WHERE id = %s", (sid_from_url,))
-            session = cur.fetchone()
-            if session:
-                cur.execute(
-                    "UPDATE sessions SET last_active = NOW() WHERE id = %s",
-                    (sid_from_url,),
-                )
-                db.commit()
-            cur.close()
-            if session:
-                created = datetime.fromisoformat(
-                    str(session["created_at"]).replace("Z", "+00:00")
-                )
-                if (datetime.now(timezone.utc) - created) < timedelta(days=7):
-                    st.session_state["user_data"] = {
-                        "id": session["id"],
-                        "alias": {
-                            "emoji": session.get("alias_emoji", "🎓"),
-                            "animal": session.get("alias_animal", "Étudiant"),
-                            "adjective": session.get("alias_adjective", "Anonyme"),
-                            "number": session.get("alias_number", 0),
-                            "display": session.get("alias_display", "🎓 Étudiant-Anonyme"),
-                        },
-                        "is_returning": True,
-                    }
-                    release_db(db)
-                    return st.session_state["user_data"]
-        except Exception as e:
-            logger.warning("init_user_identity: échec restauration session %s", sid_from_url[:8], exc_info=e)
-        finally:
-            release_db(db)
-
-    new_id = str(uuid.uuid4())
-    alias = generate_alias()
-
-    inserted = False
-    for attempt in range(2):
-        db = get_db()
-        try:
-            cur = db.cursor()
-            cur.execute(
-                "INSERT INTO sessions (id, alias_emoji, alias_animal, alias_adjective, "
-                "alias_number, alias_display, pdf_count, chat_count, search_count, "
-                "ai_count, quota_date, created_at, last_active) "
-                "VALUES (%s, %s, %s, %s, %s, %s, 0, 0, 0, 0, %s, %s, %s)",
-                (
-                    new_id,
-                    alias["emoji"], alias["animal"], alias["adjective"],
-                    alias["number"], alias["display"],
-                    datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                    datetime.now(timezone.utc).isoformat(),
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-            db.commit()
-            cur.close()
-
-            cur = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            cur.execute("SELECT id FROM sessions WHERE id = %s", (new_id,))
+        with db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM sessions WHERE id = %s", (user_id,))
             row = cur.fetchone()
-            cur.close()
+            returning = bool(row)
             if row:
-                inserted = True
-                break
-        except Exception as e:
-            logger.error("init_user_identity: échec création session (tentative %d) pour %s", attempt + 1, new_id[:8], exc_info=e)
-        finally:
+                active = row.get("last_active") or row["created_at"]
+                if isinstance(active, str):
+                    active = datetime.fromisoformat(active.replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) - active >= timedelta(days=days):
+                    # Rotate instead of exposing expired records before cleanup.
+                    db.rollback()
+                    logout()
+            else:
+                alias = generate_alias()
+                cur.execute(
+                    "INSERT INTO sessions (id, alias_emoji, alias_animal, alias_adjective, "
+                    "alias_number, alias_display, quota_date, created_at, last_active) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,NOW(),NOW()) ON CONFLICT (id) DO NOTHING",
+                    (user_id, alias["emoji"], alias["animal"], alias["adjective"],
+                     alias["number"], alias["display"], datetime.now(timezone.utc).strftime("%Y-%m-%d")),
+                )
+                cur.execute("SELECT * FROM sessions WHERE id = %s", (user_id,))
+                row = cur.fetchone()
+                if not row:
+                    raise RuntimeError("Session insertion could not be verified")
+            cur.execute("UPDATE sessions SET last_active = NOW() WHERE id = %s", (user_id,))
+        db.commit()
+    except Exception as error:
+        if db is not None:
+            db.rollback()
+        logger.error("Identity persistence failed type=%s", type(error).__name__)
+        st.error("Connexion à la base indisponible : ton espace ne peut pas être chargé ou sauvegardé. Réessaie plus tard.")
+        st.stop()
+    finally:
+        if db is not None:
             release_db(db)
 
-    if not inserted:
-        logger.error("init_user_identity: ÉCHEC CRITIQUE — impossible de créer la session %s après 2 tentatives", new_id[:8])
-
-    st.session_state["user_data"] = {
-        "id": new_id,
-        "alias": alias,
-        "is_returning": False,
+    user = {
+        "id": user_id,
+        "alias": {
+            "emoji": row.get("alias_emoji", "🎓"),
+            "animal": row.get("alias_animal", "Étudiant"),
+            "adjective": row.get("alias_adjective", "Anonyme"),
+            "number": row.get("alias_number", 0),
+            "display": row.get("alias_display", "🎓 Anonyme"),
+        },
+        "is_returning": returning,
     }
-    if inserted:
-        st.query_params["sid"] = new_id
-
-    return st.session_state["user_data"]
+    st.session_state["user_data"] = user
+    return user
 
 
 def get_user_id() -> str:
     if "user_data" in st.session_state:
         return st.session_state["user_data"]["id"]
-    raise RuntimeError("get_user_id() appelé sans init_user_identity() — appelle init_user_identity() en premier.")
+    raise RuntimeError("Initialise l'identité avant d'accéder aux données.")
 
 
 def get_user_alias() -> dict:
-    if "user_data" in st.session_state:
-        return st.session_state["user_data"]["alias"]
-    return {"display": "🎓 Anonyme", "emoji": "🎓"}
+    return st.session_state.get("user_data", {}).get("alias", {"display": "🎓 Anonyme", "emoji": "🎓"})
 
 
 def logout():
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    _clear_user_state()
+    st.session_state["identity_rotation"] = str(uuid.uuid4())
+    if "sid" in st.query_params:
+        del st.query_params["sid"]
     st.rerun()

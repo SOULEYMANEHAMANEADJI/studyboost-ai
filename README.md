@@ -48,3 +48,9 @@ Le menu du chat et de l’éditeur permet de choisir Google Gemma 4 31B, NVIDIA 
 ## Licence
 
 MIT
+
+## Identité et persistance
+
+Chaque navigateur conserve un jeton aléatoire privé dans son stockage local. La base ne conserve que son empreinte SHA-256. Les URL et anciens paramètres `sid` ne donnent aucun accès aux historiques. Les onglets du même profil de navigateur partagent le même espace ; un autre navigateur ou profil reçoit un autre espace. Effacer le stockage du site ou utiliser « Nouvelle identité » crée un nouvel espace. Sans compte, cet espace ne peut pas être récupéré sur un autre appareil.
+
+Les anciens espaces basés sur `sid` ne sont pas restaurés par cette version, afin de fermer l'accès par lien partagé. Aucune migration SQL n'est nécessaire. Configure explicitement `DATABASE_URL` avec la chaîne PostgreSQL Neon : l'ancienne variable `SUPABASE_URL` n'est plus acceptée. Dans le tableau de bord administrateur, le bouton de vérification contrôle la connexion et le schéma sans lire de conversations.

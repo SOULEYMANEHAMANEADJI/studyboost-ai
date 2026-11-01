@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script>
+"use strict";
+const STORAGE_KEY = "studyboost.privateIdentity.v1";
+let lastSent = "";
+let rotation = "";
+let appliedRotation;
+function send(type, extra) {
+  window.parent.postMessage({isStreamlitMessage: true, type, ...extra}, window.location.origin);
+}
+function sync() {
+  let value;
+  try {
+    let stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+    if (!stored || !/^[0-9a-f]{64}$/.test(stored.token) ||
+        (rotation && rotation !== appliedRotation && stored.rotation !== rotation)) {
+      const bytes = crypto.getRandomValues(new Uint8Array(32));
+      stored = {token: Array.from(bytes, b => b.toString(16).padStart(2, "0")).join(""), rotation};
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    }
+    appliedRotation = rotation;
+    value = {token: stored.token, rotation};
+  } catch (_) {
+    value = {error: "storage_unavailable", rotation};
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded !== lastSent) {
+    lastSent = encoded;
+    send("streamlit:setComponentValue", {value, dataType: "json"});
+  }
+  send("streamlit:setFrameHeight", {height: 0});
+}
+window.addEventListener("message", event => {
+  if (event.origin !== window.location.origin || event.source !== window.parent || event.data?.type !== "streamlit:render") return;
+  rotation = event.data.args.rotation || "";
+  sync();
+});
+// Other tabs of this browser must discard their old in-memory identity too.
+window.addEventListener("storage", event => {
+  if (event.key === STORAGE_KEY) {
+    sync();
+  }
+});
+send("streamlit:componentReady", {apiVersion: 1});
+</script></body></html>

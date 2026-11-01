@@ -11,7 +11,7 @@ import streamlit as st
 
 from services.ai import AVAILABLE_MODELS
 from services.database import (
-    get_settings, update_setting, admin_get_stats, cleanup_old_data, log_activity,
+    get_settings, update_setting, admin_get_stats, cleanup_old_data, log_activity, check_database_health,
 )
 from services.identity import get_user_id, init_user_identity
 from services.ui_helpers import inject_css
@@ -76,6 +76,11 @@ def main():
     if not _check_password():
         st.stop()
 
+    if st.button("🔌 Vérifier la connexion et le schéma Neon"):
+        if check_database_health():
+            st.success("Connexion PostgreSQL et schéma attendus : OK. Aucun contenu utilisateur lu ou modifié.")
+        else:
+            st.error("Connexion ou schéma invalide. Vérifie DATABASE_URL et les logs Cloud.")
     settings = get_settings()
     init_user_identity()
     user_id = get_user_id()

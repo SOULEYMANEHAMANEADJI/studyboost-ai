@@ -67,6 +67,35 @@ if settings.get("maintenance_mode", "false") == "true":
 dark_mode = st.session_state.get("dark_mode", False)
 inject_css(dark_mode=dark_mode)
 
+if "editor_text" not in st.session_state:
+    draft_text, draft_model = load_draft(user_id)
+    if draft_text:
+        st.session_state["editor_text"] = draft_text
+        if draft_model:
+            st.session_state["preferred_model"] = draft_model
+    else:
+        st.session_state["editor_text"] = """# Bienvenue sur StudyBoost AI 🎓
+
+Commence à **écrire ton Markdown** ici ou colle ton cours.
+
+## Fonctionnalités
+
+- ✏️ Éditeur Markdown avec preview en temps réel
+- 📄 Export PDF professionnel avec logo
+- 📥 Export Markdown
+- 🤖 Transformation par IA (résumé, fiche, quiz...)
+
+## Comment ça marche ?
+
+1. Colle ton texte ou édite ici
+2. Le **preview** s'affiche à droite en temps réel
+3. Clique sur **Télécharger** quand tu es prêt
+
+---
+
+> 💡 Astuce : utilise les boutons IA en bas pour transformer ton texte automatiquement.
+"""
+
 with st.sidebar:
     show_user_identity_sidebar()
     st.markdown("### ⚙️ Options")
@@ -188,35 +217,6 @@ if uploaded_pdf is not None:
                 st.rerun()
 
 st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
-
-if "editor_text" not in st.session_state:
-    draft_text, draft_model = load_draft(user_id)
-    if draft_text:
-        st.session_state["editor_text"] = draft_text
-        if draft_model:
-            st.session_state["preferred_model"] = draft_model
-    else:
-        st.session_state["editor_text"] = """# Bienvenue sur StudyBoost AI 🎓
-
-Commence à **écrire ton Markdown** ici ou colle ton cours.
-
-## Fonctionnalités
-
-- ✏️ Éditeur Markdown avec preview en temps réel
-- 📄 Export PDF professionnel avec logo
-- 📥 Export Markdown
-- 🤖 Transformation par IA (résumé, fiche, quiz...)
-
-## Comment ça marche ?
-
-1. Colle ton texte ou édite ici
-2. Le **preview** s'affiche à droite en temps réel
-3. Clique sur **Télécharger** quand tu es prêt
-
----
-
-> 💡 Astuce : utilise les boutons IA en bas pour transformer ton texte automatiquement.
-"""
 
 col_editor, col_preview = st.columns([1, 1], gap="medium")
 

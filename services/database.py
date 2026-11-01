@@ -19,14 +19,12 @@ load_dotenv()
 
 def _get_db_url() -> str:
     try:
-        url = st.secrets.get("DATABASE_URL") or st.secrets.get("SUPABASE_URL")
-    except Exception as e:
-        logger.warning("_get_db_url: fallback secrets→os.environ", exc_info=e)
+        url = st.secrets.get("DATABASE_URL")
+    except (FileNotFoundError, KeyError):
         url = None
-    if not url:
-        url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        raise RuntimeError("DATABASE_URL is missing in secrets and environment.")
+    url = url or os.environ.get("DATABASE_URL", "")
+    if not isinstance(url, str) or not url.startswith(("postgresql://", "postgres://")):
+        raise RuntimeError("Configure DATABASE_URL avec la chaîne PostgreSQL Neon dans les secrets Streamlit.")
     return url
 
 
@@ -52,10 +50,11 @@ def _fetchone(query: str, params: tuple | None = None) -> dict | None:
     pool = _get_pool()
     conn = pool.getconn()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            row = cur.fetchone()
-            return dict(row) if row else None
+        with conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(query, params)
+                row = cur.fetchone()
+                return dict(row) if row else None
     finally:
         pool.putconn(conn)
 
@@ -64,9 +63,10 @@ def _fetchall(query: str, params: tuple | None = None) -> list[dict]:
     pool = _get_pool()
     conn = pool.getconn()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            return [dict(r) for r in cur.fetchall()]
+        with conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(query, params)
+                return [dict(r) for r in cur.fetchall()]
     finally:
         pool.putconn(conn)
 
@@ -75,11 +75,37 @@ def _execute(query: str, params: tuple | None = None) -> None:
     pool = _get_pool()
     conn = pool.getconn()
     try:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-        conn.commit()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(query, params)
     finally:
         pool.putconn(conn)
+
+
+def check_database_health() -> bool:
+    """Read-only schema/connection probe: never fetch user content."""
+    conn = None
+    try:
+        conn = get_db()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+                for query in (
+                    "SELECT id, alias_display, last_active, quota_date, draft_text, preferred_model FROM sessions LIMIT 0",
+                    "SELECT session_id, role, content, created_at FROM chat_history LIMIT 0",
+                    "SELECT key, value FROM admin_settings LIMIT 0",
+                    "SELECT session_id, action_type FROM activity_logs LIMIT 0",
+                    "SELECT session_id, rating FROM feedbacks LIMIT 0",
+                ):
+                    cur.execute(query)
+        return True
+    except Exception as error:
+        logger.error("Database health check failed type=%s", type(error).__name__)
+        return False
+    finally:
+        if conn is not None:
+            release_db(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +299,8 @@ def save_chat_message(user_id: str, role: str, content: str):
             (user_id, role, content[:5000]),
         )
     except Exception as e:
-        logger.error("save_chat_message: échec pour %s", user_id, exc_info=e)
+        logger.error("save_chat_message failed type=%s", type(e).__name__)
+        st.error("Le message n'a pas été sauvegardé en base. La persistance est indisponible.")
 
 
 def get_chat_history(user_id: str) -> list:
@@ -283,8 +310,9 @@ def get_chat_history(user_id: str) -> list:
             (user_id,),
         )
     except Exception as e:
-        logger.error("get_chat_history: échec pour %s", user_id, exc_info=e)
-        return []
+        logger.error("get_chat_history failed type=%s", type(e).__name__)
+        st.error("Impossible de charger ton historique. Réessaie plus tard.")
+        st.stop()
 
 
 def clear_chat_history(user_id: str):
@@ -311,7 +339,8 @@ def save_draft(user_id: str, text: str, model: str | None = None):
                 (text[:15000], user_id),
             )
     except Exception as e:
-        logger.warning("save_draft: échec pour %s", user_id, exc_info=e)
+        logger.warning("save_draft failed type=%s", type(e).__name__)
+        st.error("Le brouillon n'a pas été sauvegardé en base. Réessaie avant de fermer cette page.")
     load_draft.clear()
 
 
@@ -325,7 +354,9 @@ def load_draft(user_id: str) -> tuple:
         if row:
             return (row.get("draft_text") or "", row.get("preferred_model") or "")
     except Exception as e:
-        logger.warning("load_draft: échec pour %s", user_id, exc_info=e)
+        logger.warning("load_draft failed type=%s", type(e).__name__)
+        st.error("Impossible de charger ton brouillon. Réessaie plus tard.")
+        st.stop()
     return ("", "")
 
 
