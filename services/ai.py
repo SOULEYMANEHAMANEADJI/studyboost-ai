@@ -1,12 +1,15 @@
-"""Groq-based AI helpers for StudyBoost AI."""
+"""OpenRouter-based AI helpers for StudyBoost AI."""
 from __future__ import annotations
 
 import os
+import json
+import socket
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 import time
 from typing import Literal
 
 from dotenv import load_dotenv
-from groq import RateLimitError, APITimeoutError, APIConnectionError, AuthenticationError, BadRequestError
 import streamlit as st
 
 from services.logger import get_logger
@@ -23,13 +26,10 @@ class StudyBoostAIError(RuntimeError):
         self.code = code
 
 AVAILABLE_MODELS = {
-    "⚡ Llama 3.1 8B (Rapide - Recommandé)": "llama-3.1-8b-instant",
-    "🧠 Llama 3.3 70B (Puissant)": "llama-3.3-70b-versatile",
-    "🦙 Llama 4 Scout 17B (Polyvalent)": "meta-llama/llama-4-scout-17b-16e-instruct",
-    "🔬 Qwen 3 32B (Long texte)": "qwen/qwen3-32b",
+    "🆓 OpenRouter — sélection gratuite automatique": "openrouter/free",
 }
 
-DEFAULT_MODEL = "llama-3.1-8b-instant"
+DEFAULT_MODEL = "openrouter/free"
 
 STYLE_PROMPTS = {
     "resume": (
@@ -75,72 +75,85 @@ STYLE_PROMPTS = {
 def _get_key(name: str) -> str:
     try:
         key = st.secrets.get(name)
-    except Exception as e:
-        logger.warning("_get_key: échec st.secrets pour %s, fallback os.environ", name, exc_info=e)
+    except (FileNotFoundError, KeyError):
         key = None
     if not key:
         key = os.environ.get(name)
-    if not key:
-        raise RuntimeError(f"{name} manquant.")
-    return key
+    if not isinstance(key, str) or not key.strip():
+        raise StudyBoostAIError(
+            f"Configure {name} dans les secrets Streamlit Cloud, puis redémarre l'application.",
+            "config",
+        )
+    return key.strip()
 
 
-@st.cache_resource
-def get_groq_client():
-    from groq import Groq
-    return Groq(api_key=_get_key("GROQ_API_KEY"))
+def _api_error(status: int) -> StudyBoostAIError:
+    errors = {
+        400: ("Requête refusée par OpenRouter. Réduis la taille du texte.", "bad_request"),
+        401: ("Clé OpenRouter invalide ou révoquée. Vérifie OPENROUTER_API_KEY dans les secrets.", "auth"),
+        402: ("OpenRouter refuse la requête pour une limite de crédits ou de compte.", "credits"),
+        403: ("Accès refusé par OpenRouter. Vérifie les autorisations et paramètres de confidentialité du compte.", "permission"),
+        404: ("Le modèle demandé est indisponible sur OpenRouter.", "model_unavailable"),
+        408: ("OpenRouter a mis trop de temps à répondre.", "timeout"),
+        429: ("Limite OpenRouter atteinte. Le quota gratuit est partagé par tous les utilisateurs de l'application.", "rate_limit"),
+        502: ("Le fournisseur IA est temporairement indisponible.", "unavailable"),
+        503: ("Aucun fournisseur IA disponible pour cette requête. Réessaie plus tard.", "unavailable"),
+        504: ("Le fournisseur IA a mis trop de temps à répondre.", "timeout"),
+    }
+    message, code = errors.get(status, ("OpenRouter a rencontré une erreur. Réessaie plus tard.", "unknown"))
+    return StudyBoostAIError(message, code)
 
 
-def _call_groq(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, max_retries=2):
-    client = get_groq_client()
-
+def _call_openrouter(messages, model=DEFAULT_MODEL, temperature=0.3, max_tokens=3000, max_retries=2):
+    key = _get_key("OPENROUTER_API_KEY")
+    # Never route to a paid model, including through a stale saved preference.
+    if model not in AVAILABLE_MODELS.values():
+        raise StudyBoostAIError("Ce modèle n'est plus proposé. Recharge la page et sélectionne OpenRouter gratuit.", "model_unavailable")
+    payload = json.dumps({
+        "model": model, "messages": messages, "temperature": temperature,
+        "max_tokens": max_tokens, "stream": False,
+    }).encode("utf-8")
+    request = Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=payload,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
     for attempt in range(max_retries + 1):
         try:
-            response = client.chat.completions.create(
-                model=model, messages=messages, temperature=temperature, max_tokens=max_tokens,
-                timeout=60,
-            )
-            return response.choices[0].message.content.strip()
-
-        except RateLimitError:
-            if attempt < max_retries:
-                wait = 3
-                logger.warning("_call_groq: RateLimitError modèle=%s, tentative %d/%d, attente %ds",
-                               model, attempt + 1, max_retries, wait)
-                time.sleep(wait)
+            with urlopen(request, timeout=60) as response:
+                data = json.load(response)
+            # OpenRouter may report a provider error inside an HTTP 200 response.
+            if "error" in data:
+                try:
+                    status = int(data["error"].get("code", 500))
+                except (TypeError, ValueError, AttributeError):
+                    status = 500
+                logger.error("OpenRouter provider error status=%s model=%s", status, model)
+                raise _api_error(status)
+            content = data["choices"][0]["message"].get("content")
+            if not isinstance(content, str) or not content.strip():
+                raise StudyBoostAIError("L'IA n'a pas généré de texte. Réessaie avec une demande plus courte.", "empty")
+            return content.strip()
+        except HTTPError as e:
+            status = e.code
+            e.close()
+            # Log status only: provider bodies may echo private input or credentials.
+            logger.error("OpenRouter HTTP status=%s model=%s attempt=%s", status, model, attempt + 1)
+            if status in (502, 503, 504) and attempt < max_retries:
+                time.sleep(2)
                 continue
-            raise StudyBoostAIError("⏳ Trop de demandes. Attends 30 secondes et réessaie.", "rate_limit")
-
-        except APITimeoutError:
-            if attempt < max_retries:
-                wait = 2
-                logger.warning("_call_groq: APITimeoutError modèle=%s, tentative %d/%d, attente %ds",
-                               model, attempt + 1, max_retries, wait)
-                time.sleep(wait)
-                continue
-            raise StudyBoostAIError("⏱️ L'IA met trop de temps à répondre. Réessaie avec un texte plus court.", "timeout")
-
-        except APIConnectionError:
-            if attempt < max_retries:
-                wait = 2
-                logger.warning("_call_groq: APIConnectionError modèle=%s, tentative %d/%d, attente %ds",
-                               model, attempt + 1, max_retries, wait)
-                time.sleep(wait)
-                continue
-            raise StudyBoostAIError("📡 Vérifie ta connexion internet.", "network")
-
-        except AuthenticationError:
-            raise StudyBoostAIError("🔑 Erreur d'authentification. Contacte le support.", "auth")
-
-        except BadRequestError:
-            raise StudyBoostAIError("⚠️ Requête invalide. Le texte est peut-être trop long pour ce modèle.", "bad_request")
-
-        except Exception:
-            logger.error("_call_groq: échec inattendu modèle=%s (tentative %d/%d)", model, attempt + 1, max_retries, exc_info=True)
-            if attempt < max_retries:
-                time.sleep(1)
-                continue
-            raise StudyBoostAIError("❌ Une erreur inattendue s'est produite. Réessaie.", "unknown")
+            raise _api_error(status) from None
+        except (TimeoutError, socket.timeout):
+            raise StudyBoostAIError("L'IA a mis trop de temps à répondre. Réessaie plus tard.", "timeout") from None
+        except URLError:
+            logger.warning("OpenRouter connection failed model=%s", model)
+            raise StudyBoostAIError("Impossible de joindre OpenRouter. Réessaie plus tard.", "network") from None
+        except StudyBoostAIError:
+            raise
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            logger.error("OpenRouter invalid response model=%s", model)
+            raise StudyBoostAIError("Réponse OpenRouter invalide. Réessaie plus tard.", "unknown") from None
 
 
 def format_text(
@@ -150,7 +163,7 @@ def format_text(
 ) -> str:
     system = "Tu es un assistant pédagogique expert. Tu réponds toujours en français avec un format Markdown propre et structuré."
     prompt = f"{STYLE_PROMPTS[style]}\n\n---\n\n{text}"
-    result = _call_groq(
+    result = _call_openrouter(
         [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         model=model, temperature=0.3,
     )
@@ -182,7 +195,7 @@ def chat_response(context: str, question: str, history: list, model: str = DEFAU
     for msg in history[-10:]:
         messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
     messages.append({"role": "user", "content": question})
-    return _call_groq(messages, model=model, temperature=0.4)
+    return _call_openrouter(messages, model=model, temperature=0.4)
 
 
 def chat_with_search(question: str, search_results: list, context: str = "", model: str = DEFAULT_MODEL) -> str:
@@ -204,7 +217,7 @@ def chat_with_search(question: str, search_results: list, context: str = "", mod
     content = f"Question : {question}\n\nRésultats de recherche web :\n{formatted}\n\n"
     if context.strip():
         content += f"Contexte du cours de l'utilisateur :\n{context[:4000]}"
-    return _call_groq(
+    return _call_openrouter(
         [{"role": "system", "content": system}, {"role": "user", "content": content}],
         model=model, temperature=0.4,
     )

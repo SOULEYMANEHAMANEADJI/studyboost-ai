@@ -26,9 +26,14 @@ def get_logger(name: str = "studyboost") -> logging.Logger:
     except Exception:
         handler = logging.StreamHandler()
 
-    handler.setFormatter(logging.Formatter(
+    formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-    ))
+    )
+    handler.setFormatter(formatter)
     logger.addHandler(handler)
+    if isinstance(handler, RotatingFileHandler):
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        logger.addHandler(console)
     return logger

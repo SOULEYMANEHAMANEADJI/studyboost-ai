@@ -382,17 +382,7 @@ def show_ai_error(e: Exception, model_name: str, action: str):
     from services.ai import StudyBoostAIError
     code = getattr(e, "code", "unknown") if isinstance(e, StudyBoostAIError) else "unknown"
 
-    _messages = {
-        "timeout": "⏱️ Le modèle a mis trop de temps. Essaie un modèle plus rapide (Llama 8B).",
-        "rate_limit": "⏳ Trop de demandes. Attends 30 secondes.",
-        "network": "📡 Vérifie ta connexion internet.",
-        "empty": "🤔 L'IA n'a pas généré de réponse. Reformule ton texte.",
-        "validation": str(e),
-        "auth": "🔑 Erreur d'authentification. Contacte le support.",
-        "unknown": "❌ Une erreur s'est produite. Réessaie dans quelques instants.",
-    }
-
-    msg = _messages.get(code, "❌ Une erreur s'est produite.")
+    msg = str(e) if isinstance(e, StudyBoostAIError) else "Une erreur inattendue s'est produite. Consulte les logs de l'application."
 
     st.error(f"""
 ❌ Erreur avec {model_name}
@@ -401,7 +391,7 @@ def show_ai_error(e: Exception, model_name: str, action: str):
 
 💡 **Solutions :**
 - Réessaie dans quelques secondes
-- Change de modèle dans la sidebar (Llama 3.1 8B, Llama 3.3 70B, Llama 4 Scout, Qwen 3 32B)
+- Si le quota OpenRouter est atteint, attends sa réinitialisation
 - Réduis la taille du texte
 """)
     if st.button("🔄 Réessayer", key=f"retry_{action}"):
