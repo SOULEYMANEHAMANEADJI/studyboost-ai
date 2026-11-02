@@ -11,6 +11,7 @@ def functions(names, env):
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     for node in nodes: node.decorator_list = []
+    env.setdefault("ensure_draft_schema",lambda:None)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), "exec"), env)
 
 class DatabaseTests(unittest.TestCase):

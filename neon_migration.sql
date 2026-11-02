@@ -79,3 +79,6 @@ INSERT INTO admin_settings (key, value) VALUES
     ('quota_ai_per_day', '15'),
     ('retention_days', '7')
 ON CONFLICT (key) DO NOTHING;
+
+-- Persist the document title without rewriting existing drafts.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS draft_title TEXT NOT NULL DEFAULT '';

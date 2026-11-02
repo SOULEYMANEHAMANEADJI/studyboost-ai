@@ -31,7 +31,7 @@ def main():
     if new_dark != dark_mode:
         st.session_state["dark_mode"] = new_dark
         st.rerun()
-    inject_css(dark_mode)
+    inject_css(dark_mode, page="chat")
 
     init_user_identity()
     settings = get_settings()
@@ -52,61 +52,34 @@ def main():
     quotas = get_user_quotas(user_id, admin_bypass=is_admin())
 
     with st.sidebar:
+        show_quota_sidebar(quotas)
         show_user_identity_sidebar()
-        st.markdown("## 💬 Chat IA")
-        st.markdown("---")
-
-        context_text = st.text_area(
-            "📋 Texte de référence (optionnel)",
-            height=200,
-            placeholder="Colle ton cours ici…\nSi vide, l'IA répond de manière générale.",
-            key="chat_context",
-        )
-        if context_text.strip():
-            st.success(f"✅ {len(context_text.split())} mots chargés")
-        else:
-            st.info("💡 Sans texte, l'IA répond comme assistant général")
-        st.markdown("---")
-
-        web_search = False
-        if search_enabled and quotas:
-            search_left = max(0, quotas["search"]["limit"] - quotas["search"]["used"])
-            search_exhausted = search_left <= 0
-            web_search = st.toggle(
-                "🌐 Activer la recherche web",
-                value=False, disabled=search_exhausted,
-                help=("Quota épuisé pour aujourd'hui." if search_exhausted
-                      else f"Recherche en ligne. {search_left} restantes."),
-            )
-        else:
-            st.caption("🌐 Recherche web désactivée")
-        st.markdown("---")
-
-        st.markdown("### 🤖 Modèle IA")
-        model_choice = st.selectbox(
-            "Choisir le modèle",
-            options=list(AVAILABLE_MODELS.keys()),
-            index=0, key="chat_model",
-        )
-        selected_model = AVAILABLE_MODELS[model_choice]
-        st.markdown("---")
-
-        if quotas:
-            show_quota_sidebar(quotas)
-        st.markdown("---")
-
-        if st.button("🗑️ Nouvelle conversation", use_container_width=True):
-            clear_chat_history(user_id)
-            st.session_state["messages"] = []
-            st.session_state.pop("_failed_question", None)
-            st.session_state.pop("_retry_prompt", None)
-            st.rerun()
-
-    st.markdown("<h1 class='gradient-title'>💬 Chat IA</h1>", unsafe_allow_html=True)
-    st.markdown(
-        "<p class='subtitle'>Pose tes questions, l'IA te répond — avec ou sans cours.</p>",
-        unsafe_allow_html=True,
-    )
+    title_col, model_col = st.columns([1, 1.5])
+    with title_col: st.title("Chat")
+    with model_col:
+        enabled_models = {name:mid for name,mid in AVAILABLE_MODELS.items() if settings.get(f"model_enabled_{mid}","true") == "true"}
+        model_choice = st.selectbox("Modèle",options=list(enabled_models),key="chat_model",disabled=not enabled_models,placeholder="Aucun modèle disponible")
+        selected_model = enabled_models.get(model_choice)
+    course_col,clear_col = st.columns([3,2])
+    with course_col:
+        with st.expander("Ajouter mon cours",expanded=bool(st.session_state.get("chat_context"))):
+            context_text=st.text_area("Cours de référence",height=140,max_chars=15000,key="chat_context",placeholder="Colle le cours sur lequel baser les réponses…")
+            st.caption("Sans cours, l'IA répond comme assistant général.")
+            web_search=st.toggle("Recherche web",value=False,key="chat_web_search",disabled=not search_enabled or quotas["search"]["used"]>=quotas["search"]["limit"])
+    with clear_col:
+        if st.button("Effacer la conversation",key="request_clear"):
+            st.session_state["confirm_clear_chat"]=True
+        if st.session_state.get("confirm_clear_chat"):
+            st.warning("Tous les messages de cet espace seront supprimés. Cette action est définitive.")
+            if st.button("Confirmer l'effacement",key="confirm_clear",type="primary"):
+                if clear_chat_history(user_id):
+                    for key in ("_failed_question","_retry_prompt","confirm_clear_chat"):
+                        st.session_state.pop(key,None)
+                    st.session_state["messages"]=[]
+                    st.rerun()
+            if st.button("Annuler",key="cancel_clear"):
+                st.session_state.pop("confirm_clear_chat",None)
+                st.rerun()
 
     if "messages" not in st.session_state or st.session_state.get("last_user_id") != user_id:
         history = get_chat_history(user_id)
@@ -117,8 +90,7 @@ def main():
         st.session_state["last_user_id"] = user_id
         if not st.session_state["messages"] and "user_data" in st.session_state:
             welcome = (
-                "Bonjour ! 👋 Je suis **StudyBoost AI**. "
-                "Colle ton cours dans la barre latérale ou pose-moi directement une question !"
+                "Bonjour ! Pose une question ou ajoute ton cours pour commencer à réviser."
             )
             st.session_state["messages"].append({"role": "assistant", "content": welcome})
             save_chat_message(user_id, "assistant", welcome)
@@ -127,9 +99,9 @@ def main():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    chat_disabled = bool(quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0)
-    if chat_disabled:
-        st.error(f"❌ Limite de messages atteinte ({quotas['chat']['used']}/{quotas['chat']['limit']}). Reviens demain !")
+    chat_disabled = not selected_model or bool(quotas and max(0, quotas["chat"]["limit"] - quotas["chat"]["used"]) <= 0)
+    if not selected_model: st.info("Aucun modèle IA n'est activé. Ton historique reste consultable.")
+    elif chat_disabled: st.info("Ton quota de messages est épuisé pour aujourd'hui.")
 
     entered_prompt = st.chat_input("Pose ta question…", disabled=chat_disabled)
     retry_prompt = st.session_state.pop("_retry_prompt", None)

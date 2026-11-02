@@ -1,6 +1,4 @@
 """Admin Dashboard — accès par URL directe uniquement."""
-import hashlib
-import hmac
 import os
 import time
 
@@ -22,52 +20,27 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-MAX_ATTEMPTS = 5
-LOCKOUT_SECONDS = 300
-
-
-def _hash_password(pwd: str) -> str:
-    return hashlib.sha256(pwd.encode("utf-8")).hexdigest()
-
-
 def _check_password():
-    if st.session_state.get("admin_auth", False):
-        return True
-    try:
-        pw = st.secrets.get("ADMIN_PASSWORD", "")
-    except Exception:
-        pw = os.environ.get("ADMIN_PASSWORD", "")
-
-    attempts = st.session_state.get("admin_attempts", 0)
-    locked_until = st.session_state.get("admin_locked_until", 0)
     now = time.time()
-
-    if attempts >= MAX_ATTEMPTS and now < locked_until:
-        remaining = int(locked_until - now)
-        st.error(f"🔒 Trop de tentatives. Réessaie dans {remaining}s.")
-        return False
-    elif attempts >= MAX_ATTEMPTS and now >= locked_until:
-        st.session_state["admin_attempts"] = 0
-
+    if st.session_state.get("admin_auth") and now < st.session_state.get("admin_auth_until",0):
+        return True
+    st.session_state["admin_auth"] = False
+    try:
+        password = st.secrets.get("ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD", "")
+    except (FileNotFoundError, KeyError):
+        password = os.environ.get("ADMIN_PASSWORD", "")
     with st.form("admin_login"):
-        st.markdown("### 🔐 Accès administrateur")
-        pwd = st.text_input("Mot de passe", type="password")
-        if st.form_submit_button("Connexion", use_container_width=True, type="primary"):
-            if not pwd:
-                st.error("Mot de passe vide.")
-            elif hmac.compare_digest(_hash_password(pwd), _hash_password(pw)):
+        st.subheader("Accès administrateur")
+        entered = st.text_input("Mot de passe",type="password",key="admin_password_input")
+        if st.form_submit_button("Connexion",type="primary"):
+            from services.admin_auth import authenticate_admin
+            ok,message = authenticate_admin(entered,password)
+            if ok:
                 st.session_state["admin_auth"] = True
-                st.session_state["admin_attempts"] = 0
+                st.session_state["admin_auth_until"] = now+1800
+                st.session_state.pop("admin_password_input",None)
                 st.rerun()
-            else:
-                attempts += 1
-                st.session_state["admin_attempts"] = attempts
-                if attempts >= MAX_ATTEMPTS:
-                    st.session_state["admin_locked_until"] = now + LOCKOUT_SECONDS
-                    st.error("🔒 Trop de tentatives. Verrouillé 5 minutes.")
-                else:
-                    remaining = MAX_ATTEMPTS - attempts
-                    st.error(f"Mot de passe incorrect. ({remaining} tentatives restantes)")
+            st.error(message)
     return False
 
 
@@ -86,6 +59,9 @@ def main():
     user_id = get_user_id()
     period = st.sidebar.selectbox("📊 Période", [7, 14, 30], index=0)
     stats = admin_get_stats(days=period)
+    if stats.get("load_failed"):
+        st.warning("Certaines statistiques n'ont pas pu être chargées. Les valeurs partielles ne constituent pas un bilan complet.")
+    st.caption(f"Activités et avis des {period} derniers jours · listes limitées aux 100 derniers résultats · horaires UTC")
 
     st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
@@ -98,12 +74,12 @@ def main():
 
     with tab1:
         c1, c2, c3, c4, c5 = st.columns(5)
-        with c1: st.metric("Sessions", stats["total_sessions"])
+        with c1: st.metric("Espaces conservés", stats["total_sessions"])
         with c2: st.metric("Actions (période)", stats["actions_period"])
         with c3: st.metric("Feedbacks", stats["feedbacks"])
         avg = stats["average_rating"]
         with c4: st.metric("Note moyenne", f"{avg:.1f}" if avg else "N/A")
-        with c5: st.metric("Emails", len(stats["emails_collected"]))
+        with c5: st.metric("Emails", stats.get("email_count",len(stats["emails_collected"])))
         st.markdown("---")
         if stats["active_users_by_day"]:
             df = pd.DataFrame(list(stats["active_users_by_day"].items()), columns=["Date", "Actifs"]).sort_values("Date")
@@ -237,9 +213,14 @@ def main():
         st.markdown("### 🧹 Nettoyage")
         if st.button("🧹 Nettoyer maintenant", use_container_width=True, type="primary"):
             with st.spinner("Nettoyage…"):
-                cleanup_old_data()
-                st.success("Nettoyage effectué.")
-                log_activity(user_id, "admin_cleanup", "")
+                result = cleanup_old_data(force=True)
+                if result is True:
+                    st.success("Nettoyage effectué.")
+                    log_activity(user_id,"admin_cleanup")
+                elif result is None:
+                    st.info("Un nettoyage est déjà en cours.")
+                else:
+                    st.error("Le nettoyage a échoué. Les suppressions ont été annulées ; consulte les logs.")
 
     with tab5:
         st.markdown("### 🤖 Gestion des modèles")

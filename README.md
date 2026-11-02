@@ -23,7 +23,7 @@ streamlit run app.py
 ## Tech Stack
 
 - **Frontend** : Streamlit
-- **Backend** : Python 3.11+
+- **Backend** : Python 3.12
 - **IA** : OpenRouter (`openrouter/free`)
 - **Base de données** : Neon (PostgreSQL)
 - **Recherche web** : DuckDuckGo
@@ -57,7 +57,7 @@ Les anciens espaces basés sur `sid` ne sont pas restaurés par cette version, a
 
 ## Vérification du lot de stabilité (branche de prévisualisation)
 
-La version `16-preview` doit être validée séparément de `main` avant déploiement. Utiliser Python 3.12 et `pip install -r requirements.lock`, puis exécuter :
+La version `16-review` doit être validée séparément de `main` avant déploiement. Utiliser Python 3.12 et `pip install -r requirements.lock`, puis exécuter :
 
 ```bash
 python -B -m unittest discover -s tests -v
@@ -71,3 +71,13 @@ Les réservations de quotas utilisent les tables existantes, sans migration SQL.
 Le quota PDF compte les imports confirmés et les préparations de fichiers. Télécharger de nouveau le même fichier déjà préparé ne lance pas une nouvelle génération. Les imports sont limités à 5 Mo, 50 pages et 15 000 caractères extraits. L'aperçu ignore les images et le HTML actif ; le PDF échappe le HTML fourni. Les requêtes web et les extraits de questions ne sont plus enregistrés dans les détails d'activité.
 
 Avant fusion : vérifier la connexion sur une base de test, deux profils de navigateur, la rotation d'identité, des réservations simultanées, un PDF invalide et deux fichiers de même nom, un export PDF/Word, l'expiration des données et les modes clair/sombre sur mobile et ordinateur. Les identifiants et clés restent uniquement dans les secrets de l'application de test.
+
+## Dernières corrections (16-review)
+
+La nouvelle présentation est intégrée à la branche de revue. L'effacement de conversation demande confirmation et ne vide l'écran qu'après succès en base. Les statistiques d'avis portent sur la période choisie ; leurs totaux ne dépendent pas des listes de détails limitées à 100 lignes.
+
+Le titre du brouillon est conservé dans `sessions.draft_title`. L'éditeur initialise cette colonne par un `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` idempotent. Si le rôle PostgreSQL n'a pas le droit ALTER, un administrateur peut exécuter la dernière commande de `neon_migration.sql`. Aucune conversation n'est transférée ou réattribuée.
+
+Le nettoyage est vérifié sur toutes les pages, au plus toutes les cinq minutes et exécuté au plus toutes les six heures. La date n'est mise à jour qu'après validation de toutes les suppressions. L'application inactive n'exécute pas de tâche : pour une échéance stricte, un planificateur externe peut appeler `python scripts/cleanup.py` avec `DATABASE_URL` dans son environnement. Aucun planificateur distant n'est configuré par le dépôt.
+
+Les échecs de connexion administrateur sont comptés en base entre navigateurs ; cinq échecs verrouillent l'accès cinq minutes. Une authentification réussie expire après trente minutes.

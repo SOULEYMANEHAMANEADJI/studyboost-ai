@@ -1,396 +1,79 @@
-"""
-Helpers UI : CSS global + mode nuit cohérent.
-Utilise des variables CSS pour une gestion centralisée du thème.
-"""
-from __future__ import annotations
-
+"""Restrained application styling and native Streamlit controls."""
+from html import escape
 import streamlit as st
 
 
-def _theme_vars(dark: bool) -> str:
-    if dark:
-        return """
-  --bg-main: #0F172A;
-  --bg-secondary: #1E293B;
-  --bg-sidebar: #0F172A;
-  --text-main: #F1F5F9;
-  --text-secondary: #CBD5E1;
-  --border: #334155;
-  --card-bg: linear-gradient(145deg, #1E293B, #0F172A);
-  --preview-text: #F1F5F9;
-  --preview-primary: #A5B4FC;
-  --preview-secondary: #C4B5FD;
-  --preview-border: #334155;
-  --preview-code-bg: #1E293B;
-  --preview-quote-bg: #1E293B;"""
-    return """
-  --bg-main: #FFFFFF;
-  --bg-secondary: #F8FAFC;
-  --bg-sidebar: linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
-  --text-main: #1E293B;
-  --text-secondary: #64748B;
-  --border: #E2E8F0;
-  --card-bg: linear-gradient(145deg, #FFFFFF, #F0F4FF);
-  --preview-text: #1E293B;
-  --preview-primary: #4F46E5;
-  --preview-secondary: #7C3AED;
-  --preview-border: #E2E8F0;
-  --preview-code-bg: #F1F5F9;
-  --preview-quote-bg: #F8FAFC;"""
-
-
-def inject_css(dark_mode: bool = False):
-    theme = _theme_vars(dark_mode)
-
-    st.markdown(f"""
-<style>
-:root {{\n{theme}\n}}
-
-/* Hide Streamlit chrome */
-footer {{ visibility: hidden; }}
-.stDeployButton {{ display: none !important; }}
-#MainMenu {{ visibility: hidden; }}
-[data-testid="stSidebarNav"] a[href*="admin"] {{ display: none !important; }}
-
-/* Base */
-.stApp {{
-    background-color: var(--bg-main) !important;
-    color: var(--text-main) !important;
-}}
-.stApp p, .stApp label, .stApp span, .stApp div, .stApp li {{
-    color: var(--text-main);
-}}
-.stMarkdown {{ color: var(--text-main) !important; }}
-.stMarkdown p, .stMarkdown li, .stMarkdown span {{ color: var(--text-main) !important; }}
-.stMarkdown h1, .stMarkdown h2, .stMarkdown h3,
-.stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {{
-    color: var(--text-main) !important;
-}}
-
-/* Sidebar */
-[data-testid="stSidebar"] {{
-    background: var(--bg-sidebar) !important;
-    border-right: 1px solid var(--border);
-}}
-[data-testid="stSidebar"] * {{ color: var(--text-main) !important; }}
-
-/* Inputs */
-.stTextInput input, .stTextArea textarea, .stSelectbox select {{
-    background-color: var(--bg-secondary) !important;
-    color: var(--text-main) !important;
-    border: 1px solid var(--border) !important;
-}}
-.stTextInput input::placeholder, .stTextArea textarea::placeholder {{
-    color: var(--text-secondary) !important;
-}}
-[data-baseweb="select"] {{
-    background-color: var(--bg-secondary) !important;
-}}
-[data-baseweb="select"] * {{ color: var(--text-main) !important; }}
-
-/* Cards */
-.card {{
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100% !important;
-    justify-content: space-between !important;
-    background: var(--card-bg) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: 20px;
-    padding: 2rem;
-    color: var(--text-main) !important;
-    box-shadow: 0 4px 20px rgba(79, 70, 229, 0.08);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}}
-.card:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 8px 30px rgba(79, 70, 229, 0.12);
-}}
-
-/* Buttons */
-.stButton > button[kind="primary"] {{
-    background: linear-gradient(135deg, #4F46E5, #7C3AED) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 10px !important;
-    padding: 0.6rem 1.5rem !important;
-    font-weight: 700 !important;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}}
-.stButton > button[kind="primary"]:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 8px 25px rgba(79, 70, 229, 0.4);
-}}
-.stButton > button {{
-    background: var(--bg-secondary) !important;
-    color: var(--text-main) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 10px !important;
-    transition: background 0.15s ease;
-}}
-.stButton > button:hover {{
-    background: var(--border) !important;
-}}
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {{
-    background: var(--bg-secondary) !important;
-    border-radius: 12px;
-    padding: 4px;
-}}
-.stTabs [data-baseweb="tab"] {{
-    color: var(--text-main) !important;
-    border-radius: 8px;
-}}
-
-/* Chat */
-.stChatMessage {{
-    background: var(--bg-secondary) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 12px !important;
-    color: var(--text-main) !important;
-}}
-.stChatMessage * {{ color: var(--text-main) !important; }}
-
-/* Metrics */
-[data-testid="stMetric"] {{
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1rem;
-}}
-[data-testid="stMetric"] * {{ color: var(--text-main) !important; }}
-
-/* Misc */
-.stCaption {{ color: var(--text-secondary) !important; }}
-.stAlert {{ border-radius: 12px; }}
-.streamlit-expanderHeader {{
-    background: var(--bg-secondary) !important;
-    color: var(--text-main) !important;
-    border-radius: 8px;
-}}
-
-.gradient-title {{
-    font-size: 3rem;
-    font-weight: 900;
-    background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 60%, #EC4899 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-align: center;
-    line-height: 1.1;
-}}
-
-.badge {{
-    display: inline-block;
-    background: linear-gradient(135deg, #4F46E5, #7C3AED);
-    color: white;
-    padding: 3px 12px;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-}}
-
-/* Selection */
-::selection {{
-    background: rgba(79, 70, 229, 0.2);
-    color: var(--text-main);
-}}
-
-/* Focus ring */
-*:focus-visible {{
-    outline: 2px solid #4F46E5;
-    outline-offset: 2px;
-    border-radius: 4px;
-}}
-
-/* Toast / success messages */
-.stAlert {{
-    border-radius: 12px !important;
-    border: none !important;
-    font-weight: 500;
-}}
-div[data-testid="stNotification"] {{
-    border-radius: 12px !important;
-}}
-
-/* Scrollbar */
-::-webkit-scrollbar {{ width: 8px; height: 8px; }}
-::-webkit-scrollbar-track {{ background: var(--bg-secondary); }}
-::-webkit-scrollbar-thumb {{ background: var(--border); border-radius: 4px; }}
-::-webkit-scrollbar-thumb:hover {{ background: #4F46E5; }}
-
-/* Steps on home page */
-.step-container {{
-    text-align: center;
-    padding: 1.5rem;
-    transition: transform 0.2s ease;
-}}
-.step-container:hover {{
-    transform: translateY(-3px);
-}}
-.step-emoji {{ font-size: 2.5rem; margin-bottom: 0.5rem; }}
-.step-title {{ font-size: 1.1rem; font-weight: 700; color: var(--text-main); }}
-.step-desc {{ font-size: 0.9rem; color: var(--text-secondary); }}
-
-/* Privacy box */
-.privacy-box {{
-    background: var(--card-bg) !important;
-    border: 1.5px solid var(--border) !important;
-    border-radius: 16px;
-    padding: 1.5rem;
-    color: var(--text-main) !important;
-}}
-
-/* Fade-in animation */
-@keyframes fadeIn {{
-    from {{ opacity: 0; transform: translateY(8px); }}
-    to {{ opacity: 1; transform: translateY(0); }}
-}}
-.stApp {{
-    animation: fadeIn 0.4s ease-out;
-}}
-
-/* Responsive Mobile First */
-@media (max-width: 1024px) {{
-    .gradient-title {{ font-size: 2.2rem !important; }}
-}}
-
-@media (max-width: 768px) {{
-    [data-testid="column"] {{
-        width: 100% !important;
-        flex: 1 1 100% !important;
-    }}
-    .gradient-title {{ font-size: 1.8rem !important; }}
-    .card {{
-        padding: 1.2rem !important;
-        margin: 0.5rem 0 !important;
-    }}
-    .step-container {{ padding: 1rem !important; }}
-    .step-emoji {{ font-size: 2rem !important; }}
-    .stButton > button {{ font-size: 0.85rem !important; }}
-    [data-testid="stSidebar"] {{ min-width: 280px !important; }}
-    /* IA buttons: 2x3 grid on mobile */
-    [data-testid="column"] .stButton button {{
-        font-size: 0.8rem !important;
-        padding: 0.4rem 0.6rem !important;
-    }}
-}}
-
-@media (max-width: 480px) {{
-    .gradient-title {{ font-size: 1.5rem !important; }}
-    .card h3 {{ font-size: 1.1rem !important; }}
-    .stButton button {{ width: 100% !important; }}
-    /* Ensure preview doesn't overflow */
-    .preview-content {{
-        word-break: break-word !important;
-        overflow-wrap: break-word !important;
-    }}
-    .preview-content pre {{
-        white-space: pre-wrap !important;
-        font-size: 0.75rem !important;
-    }}
-}}
-</style>""", unsafe_allow_html=True)
+def inject_css(dark_mode: bool = False, page: str = ""):
+    paper,side,ink,muted,line,accent,accent_ink,bubble = (
+        ("#171b22","#12161d","#e7ebf1","#a6afbd","#323843","#a6c3e8","#132338","#242d39") if dark_mode else
+        ("#ffffff","#f5f6f7","#252b34","#68717e","#e5e7eb","#324e70","#ffffff","#f0f2f5")
+    )
+    width = "820px" if page == "chat" else "1180px"
+    st.markdown(f"""<style>
+:root {{ --bg-main:{paper};--bg-secondary:{side};--text-main:{ink};--text-secondary:{muted};--border:{line};--sb-accent:{accent};--sb-accent-ink:{accent_ink};--preview-text:{ink};--preview-primary:{accent};--preview-secondary:{accent};--preview-border:{line};--preview-code-bg:{side};--preview-quote-bg:{side}; }}
+.stApp {{background:{paper};color:{ink};}}
+[data-testid="stMainBlockContainer"] {{max-width:{width};padding-top:2.2rem;padding-bottom:3rem;}}
+[data-testid="stSidebar"] {{background:{side};border-right:1px solid {line};}}
+[data-testid="stSidebarNav"] {{display:none;}}
+[data-testid="stSidebarUserContent"] {{padding-top:1.4rem;}}
+h1,.gradient-title {{font-size:1.7rem!important;line-height:1.3!important;letter-spacing:-.04em;font-weight:600!important;text-align:left!important;color:{ink}!important;background:none!important;-webkit-text-fill-color:currentColor!important;}}
+.stMarkdown,.stMarkdown p,.stMarkdown li,.stHeading,[data-testid="stWidgetLabel"] p,[data-testid="stPageLink-NavLink"] p {{color:{ink};}}
+.stTextInput input::placeholder,.stTextArea textarea::placeholder {{color:{muted};}}
+h2 {{font-size:1.25rem!important;}} h3 {{font-size:1.05rem!important;}}
+.stMarkdown p,.stMarkdown li {{line-height:1.7;}}
+[data-testid="stCaptionContainer"],.subtitle {{color:{muted};}}
+.stButton button,.stDownloadButton button {{border-radius:7px;box-shadow:none;}}
+button[kind="primary"] {{background:{accent}!important;color:{accent_ink}!important;border-color:{accent}!important;}}
+button[kind="primary"] p {{color:inherit;}}
+.stTextInput input,.stTextArea textarea,[data-baseweb="select"] > div {{background:{paper};color:{ink};border-color:{line};}}
+.stChatMessage {{background:transparent;border:0;padding:1rem 0;}}
+.stChatMessage:has([data-testid="stChatMessageAvatarUser"]) {{background:{bubble};border-radius:12px;padding:1rem;margin-left:12%;width:88%;}}
+[data-testid="stChatInput"] {{border:1px solid {line};border-radius:10px;background:{paper};}}
+.sb-identity {{padding:1rem 0;border-top:1px solid {line};margin-top:1rem;}}
+.sb-identity strong {{display:block;font-size:.85rem;font-weight:500;}}
+.sb-identity small {{color:{muted};font-size:.75rem;}}
+.sb-brand {{font-size:1.25rem;font-weight:600;letter-spacing:-.04em;margin-bottom:1rem;}}
+.preview-content {{color:{ink};line-height:1.7;overflow-wrap:anywhere;}}
+.preview-content h1 {{font-size:1.5rem!important;}} .preview-content h2 {{margin-top:1.5rem;}}
+.preview-content blockquote {{border-left:2px solid {accent};padding-left:1rem;color:{muted};}}
+.preview-content pre {{background:{side};padding:1rem;border-radius:6px;white-space:pre-wrap;}}
+.preview-content table {{border-collapse:collapse;width:100%;}} .preview-content th,.preview-content td {{border:1px solid {line};padding:.5rem;}}
+.card,.privacy-box {{border:1px solid {line};border-radius:10px;padding:1.3rem;background:{paper};}}
+.step-container {{padding:1rem 0;}} .step-title {{font-weight:500;}} .step-desc {{color:{muted};}}
+.badge {{font-size:.75rem;color:{muted};}} .stAlert {{border-radius:8px;}}
+@media(max-width:700px) {{[data-testid="stMainBlockContainer"]{{padding:1.5rem 1rem;}} .stChatMessage:has([data-testid="stChatMessageAvatarUser"]){{margin-left:4%;width:96%;}} .stTextArea textarea{{font-size:16px;}}}}
+</style>""",unsafe_allow_html=True)
+    with st.sidebar:
+        st.markdown('<div class="sb-brand">StudyBoost <span style="font-weight:400">AI</span></div>',unsafe_allow_html=True)
+        st.page_link("pages/0_Accueil.py",label="Accueil",icon="🏠")
+        st.page_link("pages/2_Chat.py",label="Chat",icon="💬")
+        st.page_link("pages/1_Editeur.py",label="Éditeur",icon="📝")
+        st.page_link("pages/3_Feedback.py",label="Avis",icon="✉️")
 
 
 def show_user_identity_sidebar(retention_days: int | None = None):
-    """Affiche la carte d'identité utilisateur dans la sidebar."""
     from services.identity import get_user_alias
-
-    if retention_days is None:
-        from services.database import get_settings
-        retention_days = int(get_settings().get("retention_days", "7"))
-
-    alias = get_user_alias()
-    user_data = st.session_state.get("user_data", {})
-    is_returning = user_data.get("is_returning", False)
-    greeting = "👋 Bon retour !" if is_returning else "🎉 Bienvenue !"
-    st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 12px;
-        margin-bottom: 1rem;
-        text-align: center;
-    ">
-        <div style="font-size: 1.05rem; font-weight: 700;">
-            {alias['display']}
-        </div>
-        <div style="font-size: 0.78rem; opacity: 0.95; margin-top: 0.4rem;">
-            {greeting}
-        </div>
-        <div style="font-size: 0.68rem; opacity: 0.75; margin-top: 0.2rem;">
-            🔒 Espace anonyme · {retention_days} jours
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    from services.database import get_settings
+    if retention_days is None: retention_days=int(get_settings().get("retention_days","7"))
+    name=escape(get_user_alias().get("display","Espace privé"))
+    st.markdown(f'<div class="sb-identity"><strong>{name}</strong><small>Espace privé · ce navigateur<br>Historique : {retention_days} jours</small></div>',unsafe_allow_html=True)
 
 
-def show_quota_sidebar(quotas: dict | None = None):
-    """Affiche TOUS les quotas avec barres de progression."""
-    from services.identity import get_user_id
-    from services.database import get_user_quotas
-
+def show_quota_sidebar(quotas=None):
     if quotas is None:
-        uid = get_user_id()
-        if uid:
-            quotas = get_user_quotas(uid)
-    if not quotas:
-        return
-
+        from services.identity import get_user_id
+        from services.database import get_user_quotas
+        quotas=get_user_quotas(get_user_id())
     if quotas.get("_fallback"):
-        st.warning("⚠️ Vérification des quotas indisponible — actions temporairement suspendues.")
-
-    st.markdown("### 📊 Quotas du jour")
-    items = [
-        ("pdf", "📄", "PDF"),
-        ("chat", "💬", "Messages"),
-        ("search", "🔍", "Recherches web"),
-        ("ai", "✨", "Transformations IA"),
-    ]
-    for key, emoji, label in items:
-        q = quotas.get(key, {})
-        used = q.get("used", 0)
-        limit = q.get("limit", 10)
-        remaining = max(0, limit - used)
-        pct = min(used / limit, 1) if limit > 0 else 0
-        color = "#EF4444" if pct >= 0.9 else ("#F59E0B" if pct >= 0.7 else "#10B981")
-
-        st.markdown(f"""
-        <div style="margin-bottom: 0.7rem;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.82rem;">
-                <span>{emoji} {label}</span>
-                <span style="color: {color}; font-weight: 700;">{remaining}/{limit}</span>
-            </div>
-            <div style="background: rgba(226, 232, 240, 0.5); height: 4px; border-radius: 2px; margin-top: 4px;">
-                <div style="background: {color}; width: {pct * 100}%; height: 100%; border-radius: 2px;"></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("""
-    <div style="font-size: 0.78rem; color: #10B981; margin-top: 0.8rem; padding: 0.5rem; background: rgba(16, 185, 129, 0.1); border-radius: 6px; text-align: center;">
-        📥 Markdown : illimité ∞
-    </div>
-    """, unsafe_allow_html=True)
+        st.warning("Vérification des quotas indisponible : actions temporairement suspendues.")
+        return
+    with st.expander("Demandes restantes"):
+        for key,label in (("chat","Messages"),("ai","Transformations"),("pdf","Imports / préparations PDF"),("search","Recherches web")):
+            q=quotas.get(key,{"used":0,"limit":0}); remaining=max(0,q["limit"]-q["used"])
+            st.caption(f"{label} : {remaining} / {q['limit']}")
+        st.caption("Le budget OpenRouter est partagé par toute l'application. Les tentatives IA sont comptées.")
 
 
-def show_ai_error(e: Exception, model_name: str, action: str):
+def show_ai_error(error, model_name, action):
     from services.ai import StudyBoostAIError
-    code = getattr(e, "code", "unknown") if isinstance(e, StudyBoostAIError) else "unknown"
-
-    msg = str(e) if isinstance(e, StudyBoostAIError) else "Une erreur inattendue s'est produite. Consulte les logs de l'application."
-
-    st.error(f"""
-❌ Erreur avec {model_name}
-
-{msg}
-
-💡 **Solutions :**
-- Réessaie dans quelques secondes
-- Si le quota OpenRouter est atteint, attends sa réinitialisation
-- Réduis la taille du texte
-""")
+    st.error(str(error) if isinstance(error,StudyBoostAIError) else "Une erreur inattendue s'est produite. Réessaie plus tard.")

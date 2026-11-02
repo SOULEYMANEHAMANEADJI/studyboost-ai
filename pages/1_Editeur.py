@@ -24,27 +24,7 @@ from services.ui_helpers import inject_css, show_user_identity_sidebar, show_quo
 
 
 def _render_markdown_html(text: str) -> str:
-    html = safe_markdown(text)
-
-    return """
-    <style>
-    .preview-content { color: var(--preview-text); font-family: 'Inter', sans-serif; line-height: 1.6; }
-    .preview-content h1 { color: var(--preview-text); font-size: 1.8rem; font-weight: 800; margin-top: 0.5rem; border-bottom: 2px solid var(--preview-primary); padding-bottom: 0.3rem; }
-    .preview-content h2 { color: var(--preview-primary); font-size: 1.4rem; font-weight: 700; margin-top: 1rem; }
-    .preview-content h3 { color: var(--preview-text); font-size: 1.15rem; font-weight: 700; margin-top: 0.8rem; }
-    .preview-content p { margin: 0.5rem 0; }
-    .preview-content ul, .preview-content ol { margin: 0.5rem 0; padding-left: 1.5rem; }
-    .preview-content li { margin: 0.2rem 0; }
-    .preview-content code { background: var(--preview-code-bg); color: var(--preview-secondary); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; }
-    .preview-content pre { background: var(--preview-code-bg); padding: 12px; border-radius: 8px; overflow-x: auto; }
-    .preview-content blockquote { border-left: 4px solid var(--preview-primary); background: var(--preview-quote-bg); padding: 8px 16px; margin: 0.5rem 0; border-radius: 4px; }
-    .preview-content strong { color: var(--preview-primary); }
-    .preview-content hr { border: none; border-top: 1px solid var(--preview-border); margin: 1rem 0; }
-    .preview-content table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-    .preview-content th, .preview-content td { border: 1px solid var(--preview-border); padding: 8px; text-align: left; }
-    .preview-content th { background: var(--preview-code-bg); }
-    </style>
-    <div class="preview-content">""" + html + "</div>"
+    return '<div class="preview-content">'+safe_markdown(text)+'</div>'
 
 
 st.set_page_config(
@@ -66,10 +46,11 @@ if settings.get("maintenance_mode", "false") == "true":
     st.stop()
 
 dark_mode = st.session_state.get("dark_mode", False)
-inject_css(dark_mode=dark_mode)
+inject_css(dark_mode=dark_mode, page="editor")
 
 if "editor_text" not in st.session_state:
-    draft_text, draft_model = load_draft(user_id)
+    draft_text, draft_model, draft_title = load_draft(user_id)
+    st.session_state["doc_title"] = draft_title or generate_default_title()
     if draft_text:
         st.session_state["editor_text"] = draft_text
         if draft_model:
@@ -102,46 +83,27 @@ if "_pending_doc_title" in st.session_state:
     st.session_state["doc_title_input"] = st.session_state.pop("_pending_doc_title")
 
 with st.sidebar:
-    show_user_identity_sidebar()
-    st.markdown("### ⚙️ Options")
-    dark_mode_new = st.toggle("🌙 Mode nuit", value=dark_mode, key="editor_dark")
-    if dark_mode_new != dark_mode:
-        st.session_state["dark_mode"] = dark_mode_new
+    new_dark=st.toggle("Mode sombre",value=dark_mode,key="editor_dark")
+    if new_dark != dark_mode:
+        st.session_state["dark_mode"]=new_dark
         st.rerun()
-    st.markdown("---")
+    show_user_identity_sidebar()
+    quotas=get_user_quotas(user_id,admin_bypass=is_admin())
+    show_quota_sidebar(quotas)
 
-    st.markdown("### 🤖 Modèle IA")
-    saved_model = st.session_state.get("preferred_model", "")
-    model_keys = list(AVAILABLE_MODELS.keys())
-    model_index = 0
-    if saved_model:
-        for i, k in enumerate(model_keys):
-            if AVAILABLE_MODELS[k] == saved_model:
-                model_index = i
-                break
-    model_name = st.selectbox(
-        "Modèle", options=model_keys, index=model_index, label_visibility="collapsed",
-    )
-    selected_model = AVAILABLE_MODELS[model_name]
-    if st.session_state.get("preferred_model") != selected_model:
-        st.session_state["preferred_model"] = selected_model
-        save_draft(user_id, editor_value(st.session_state), model=selected_model)
-    st.markdown("---")
-
-    quotas = get_user_quotas(user_id, admin_bypass=is_admin())
-    if quotas:
-        show_quota_sidebar(quotas)
+header,model_column=st.columns([1,1.5])
+with header: st.title("Éditeur")
+with model_column:
+    enabled_models={name:mid for name,mid in AVAILABLE_MODELS.items() if settings.get(f"model_enabled_{mid}","true")=="true"}
+    model_keys=list(enabled_models)
+    selected_index=next((i for i,k in enumerate(model_keys) if enabled_models[k]==st.session_state.get("preferred_model")),0)
+    model_name=st.selectbox("Modèle",model_keys,index=selected_index if model_keys else None,key="editor_model",disabled=not model_keys)
+    selected_model=enabled_models.get(model_name)
+    if selected_model: st.session_state["preferred_model"]=selected_model
 
 col_title, col_name, col_download = st.columns([1, 2, 1.5])
 with col_title:
-    st.markdown(
-        '<div style="display:flex;align-items:center;gap:10px;padding-top:10px;">'
-        '<span style="font-size:1.8rem;">🎓</span>'
-        '<span style="font-size:1.3rem;font-weight:800;background:linear-gradient(135deg,#4F46E5,#7C3AED);'
-        "-webkit-background-clip:text;-webkit-text-fill-color:transparent;"
-        '">StudyBoost</span></div>',
-        unsafe_allow_html=True,
-    )
+    st.caption("Mon document")
 
 with col_name:
     if "doc_title" not in st.session_state:
@@ -152,7 +114,8 @@ with col_name:
         key="doc_title_input", max_chars=100,
     )
     clean = "".join(c for c in doc_title if c.isprintable()).strip()[:100]
-    st.session_state["doc_title"] = clean or "document"
+    doc_title=clean or "document"
+    st.session_state["doc_title"]=doc_title
 
 with col_download:
     download_format = st.selectbox(
@@ -161,7 +124,7 @@ with col_download:
         label_visibility="collapsed", key="download_format",
     )
 
-st.markdown('<div style="border-bottom:1px solid #E2E8F0;margin:10px 0 20px 0;"></div>', unsafe_allow_html=True)
+
 
 has_pdf_preview = st.session_state.get("_pdf_info") is not None
 with st.expander("📄 Importer un PDF → Markdown", expanded=has_pdf_preview):
@@ -206,53 +169,61 @@ else:
     for key in ("_pdf_info", "_pdf_upload_sig", "_pdf_error"):
         st.session_state.pop(key, None)
 
-col_editor, col_preview = st.columns([1, 1], gap="medium")
+view=st.radio("Disposition",["Côte à côte","Écrire","Aperçu"],horizontal=True,key="editor_view")
+if view=="Côte à côte":
+    col_editor,col_preview=st.columns([1,1],gap="medium")
+else:
+    col_editor,col_preview=st.container(),st.container()
+editor_text=editor_value(st.session_state)
+if view != "Aperçu":
+    with col_editor:
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+            '<span style="font-weight:500;">Mon texte</span>'
+            '<span style="color:#94A3B8;font-size:0.85rem;">— Markdown</span></div>',
+            unsafe_allow_html=True,
+        )
+        if "editor_textarea" not in st.session_state:
+            st.session_state["editor_textarea"] = st.session_state["editor_text"]
+        editor_text = st.text_area(
+            "Éditeur",
+            height=550, max_chars=MAX_CHARS,
+            label_visibility="collapsed", key="editor_textarea",
+            placeholder="Tape ou colle ton Markdown ici...",
+        )
+        st.session_state["editor_text"] = editor_text
+        chars = len(editor_text)
+        words = len(editor_text.split())
+        pct = (chars / MAX_CHARS) * 100
+        color = "#EF4444" if pct > 90 else ("#F59E0B" if pct > 70 else "#64748B")
+        st.markdown(
+            f'<div style="display:flex;justify-content:space-between;font-size:0.85rem;color:{color};margin-top:5px;">'
+            f"<span>📊 {chars:,} / {MAX_CHARS:,} caractères</span>"
+            f"<span>📝 {words:,} mots</span></div>",
+            unsafe_allow_html=True,
+        )
 
-with col_editor:
-    st.markdown(
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
-        '<span style="font-weight:700;color:#4F46E5;">✏️ ÉDITEUR</span>'
-        '<span style="color:#94A3B8;font-size:0.85rem;">— Markdown</span></div>',
-        unsafe_allow_html=True,
-    )
-    if "editor_textarea" not in st.session_state:
-        st.session_state["editor_textarea"] = st.session_state["editor_text"]
-    editor_text = st.text_area(
-        "Éditeur",
-        height=550, max_chars=MAX_CHARS,
-        label_visibility="collapsed", key="editor_textarea",
-        placeholder="Tape ou colle ton Markdown ici...",
-    )
-    st.session_state["editor_text"] = editor_text
-    if st.session_state.get("_last_draft") != editor_text:
-        if save_draft(user_id, editor_text):
-            st.session_state["_last_draft"] = editor_text
-    if st.session_state.get("_last_draft") == editor_text:
-        st.caption("Brouillon sauvegardé")
-    chars = len(editor_text)
-    words = len(editor_text.split())
-    pct = (chars / MAX_CHARS) * 100
-    color = "#EF4444" if pct > 90 else ("#F59E0B" if pct > 70 else "#64748B")
-    st.markdown(
-        f'<div style="display:flex;justify-content:space-between;font-size:0.85rem;color:{color};margin-top:5px;">'
-        f"<span>📊 {chars:,} / {MAX_CHARS:,} caractères</span>"
-        f"<span>📝 {words:,} mots</span></div>",
-        unsafe_allow_html=True,
-    )
+if view != "Écrire":
+    with col_preview:
+        st.markdown(
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+            '<span style="font-weight:500;">Aperçu</span>'
+            '<span style="color:#94A3B8;font-size:0.85rem;">— Rendu en temps réel</span></div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div style="min-height:420px;padding:20px;'
+            f"border:1px solid var(--preview-border);border-radius:8px;background:var(--bg-main);color:var(--text-main);"
+            f'">{_render_markdown_html(editor_text)}</div>',
+            unsafe_allow_html=True,
+        )
 
-with col_preview:
-    st.markdown(
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
-        '<span style="font-weight:700;color:#7C3AED;">👁️ PREVIEW</span>'
-        '<span style="color:#94A3B8;font-size:0.85rem;">— Rendu en temps réel</span></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<div style="height:550px;overflow-y:auto;padding:20px;'
-        f"border:1px solid var(--preview-border);border-radius:8px;background:var(--bg-main);color:var(--text-main);"
-        f'">{_render_markdown_html(editor_text)}</div>',
-        unsafe_allow_html=True,
-    )
+draft_signature=(editor_text,selected_model,doc_title)
+if st.session_state.get("_last_draft") != draft_signature:
+    if save_draft(user_id,editor_text,model=selected_model,title=doc_title):
+        st.session_state["_last_draft"]=draft_signature
+if st.session_state.get("_last_draft") == draft_signature:
+    st.caption("Brouillon sauvegardé")
 
 st.markdown('<div style="margin:20px 0;"></div>', unsafe_allow_html=True)
 
@@ -325,16 +296,7 @@ with col_dl2:
                     use_container_width=True, type="primary",
                 )
 
-st.markdown(
-    '<div style="margin:30px 0 10px 0;border-top:1px solid #E2E8F0;padding-top:20px;"></div>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    '<div style="text-align:center;margin-bottom:15px;">'
-    '<span style="font-weight:700;color:#4F46E5;font-size:1.1rem;">✨ Transformer avec l\'IA</span>'
-    '<br><span style="color:#64748B;font-size:0.85rem;">Optionnel — choisis une action ci-dessous</span></div>',
-    unsafe_allow_html=True,
-)
+st.subheader("Transformer mon texte")
 
 ia_actions = [
     ("📄 Résumer", "resume"),
@@ -348,32 +310,27 @@ ia_actions = [
 is_text_valid = len(editor_text.strip()) >= 50
 ia_tooltip = None if is_text_valid else "📝 Écris au moins 50 caractères pour utiliser l'IA"
 
-cols = st.columns(6)
-for col, (label, action) in zip(cols, ia_actions):
-    with col:
-        if st.button(label, use_container_width=True, key=f"ia_{action}", disabled=not is_text_valid, help=ia_tooltip):
-            if quotas and quotas["ai"]["used"] >= quotas["ai"]["limit"]:
-                st.error(f"❌ Limite IA atteinte ({quotas['ai']['limit']} transformations/jour). Reviens demain !")
-            else:
-                with st.spinner(f"✨ {label} en cours..."):
-                    start = time.time()
-                    try:
-                        reserve_quota(user_id, "ai", model=selected_model, admin_bypass=is_admin())
-                        result = format_text(editor_text, action, model=selected_model)
-                        elapsed = time.time() - start
-                        if len(result) > MAX_CHARS:
-                            raise StudyBoostAIError("La réponse dépasse la taille de l'éditeur. Demande une version plus courte.", "validation")
-                        stage_editor_text(st.session_state, result)
-                        log_activity(user_id, f"ai_{action}", selected_model)
-                        st.success(f"✅ {label} terminé en {elapsed:.1f}s")
-                        st.rerun()
-                    except QuotaError as e:
-                        st.error(str(e))
-                    except StudyBoostAIError as e:
-                        show_ai_error(e, model_name.split(" (")[0], action)
-                    except Exception as e:
-                        logger.warning("Erreur inattendue IA %s: %s", action, e)
-                        st.error("❌ Une erreur inattendue s'est produite. La transformation a peut-être réussi malgré tout.")
+action_col,button_col=st.columns([3,1])
+with action_col:
+    action_label=st.selectbox("Transformer",[label for label,action in ia_actions],key="transform_action")
+with button_col:
+    transform=st.button("Transformer",key="transform_submit",type="primary",disabled=not is_text_valid or not selected_model)
+if transform:
+    action=dict(ia_actions)[action_label]
+    with st.spinner("Transformation en cours…"):
+        try:
+            reserve_quota(user_id,"ai",model=selected_model,admin_bypass=is_admin())
+            result=format_text(editor_text,action,model=selected_model)
+            if len(result)>MAX_CHARS:
+                raise StudyBoostAIError("La réponse dépasse la taille de l'éditeur. Demande une version plus courte.","validation")
+            stage_editor_text(st.session_state,result)
+            log_activity(user_id,f"ai_{action}")
+            st.rerun()
+        except QuotaError as error: st.error(str(error))
+        except StudyBoostAIError as error: show_ai_error(error,model_name,action)
+        except Exception as error:
+            logger.warning("Editor transformation failed type=%s",type(error).__name__)
+            st.error("La transformation a échoué. Ton texte est conservé.")
 
 st.markdown(
     f'<div style="text-align:center;color:#94A3B8;font-size:0.75rem;margin-top:1rem;padding-bottom:1rem;">'

@@ -200,6 +200,7 @@ def get_settings() -> dict:
                 )
             except Exception as e:
                 logger.warning("get_settings: échec insertion default %s", key, exc_info=e)
+    maybe_cleanup_old_data()
     return settings
 
 
@@ -291,34 +292,39 @@ def get_chat_history(user_id: str) -> list:
         st.stop()
 
 
-def clear_chat_history(user_id: str):
+def clear_chat_history(user_id: str) -> bool:
     try:
         _execute("DELETE FROM chat_history WHERE session_id = %s", (user_id,))
+        return True
     except Exception as e:
-        logger.warning("clear_chat_history: échec pour %s", user_id, exc_info=e)
+        logger.warning("Chat deletion failed type=%s", type(e).__name__)
+        st.error("La conversation n'a pas pu être effacée. Ton historique est conservé.")
+        return False
 
 
 # ---------------------------------------------------------------------------
 # Draft persistence (éditeur)
 # ---------------------------------------------------------------------------
 
-def save_draft(user_id: str, text: str, model: str | None = None) -> bool:
+@st.cache_resource
+def ensure_draft_schema():
+    # Additive and idempotent; never rewrites existing drafts.
+    _execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS draft_title TEXT NOT NULL DEFAULT ''")
+
+
+def save_draft(user_id: str, text: str, model: str | None = None, title: str | None = None) -> bool:
     try:
-        if model:
-            changed = _execute(
-                "UPDATE sessions SET draft_text=%s, preferred_model=%s, last_active=NOW() WHERE id=%s",
-                (text[:15000], model, user_id),
-            )
-        else:
-            changed = _execute(
-                "UPDATE sessions SET draft_text=%s, last_active=NOW() WHERE id=%s",
-                (text[:15000], user_id),
-            )
+        ensure_draft_schema()
+        changed = _execute(
+            "UPDATE sessions SET draft_text=%s, preferred_model=COALESCE(%s,preferred_model), "
+            "draft_title=COALESCE(%s,draft_title), last_active=NOW() WHERE id=%s",
+            (text[:15000], model, title[:100] if title is not None else None, user_id),
+        )
         if changed != 1:
             raise RuntimeError("Session missing during draft save")
-    except Exception as e:
-        logger.warning("save_draft failed type=%s", type(e).__name__)
-        st.error("Le brouillon n'a pas été sauvegardé en base. Réessaie avant de fermer cette page.")
+    except Exception as error:
+        logger.warning("Draft save failed type=%s", type(error).__name__)
+        st.error("Le brouillon n'a pas été sauvegardé. Réessaie avant de fermer la page.")
         return False
     load_draft.clear()
     return True
@@ -327,17 +333,18 @@ def save_draft(user_id: str, text: str, model: str | None = None) -> bool:
 @st.cache_data(ttl=5)
 def load_draft(user_id: str) -> tuple:
     try:
+        ensure_draft_schema()
         row = _fetchone(
-            "SELECT draft_text, preferred_model FROM sessions WHERE id = %s",
+            "SELECT draft_text, preferred_model, draft_title FROM sessions WHERE id = %s",
             (user_id,),
         )
         if row:
-            return (row.get("draft_text") or "", row.get("preferred_model") or "")
+            return (row.get("draft_text") or "", row.get("preferred_model") or "", row.get("draft_title") or "")
     except Exception as e:
         logger.warning("load_draft failed type=%s", type(e).__name__)
         st.error("Impossible de charger ton brouillon. Réessaie plus tard.")
         st.stop()
-    return ("", "")
+    return ("", "", "")
 
 
 # ---------------------------------------------------------------------------
@@ -363,115 +370,77 @@ def save_feedback(user_id: str, rating: int, comment: str, feature_request: str,
 # Cleanup
 # ---------------------------------------------------------------------------
 
-def cleanup_old_data(force: bool = False):
-    settings = get_settings()
-    if settings.get("auto_cleanup_enabled", "true") != "true":
-        return
-
-    days = int(settings.get("retention_days", "7"))
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    logger.info("cleanup_old_data: suppression données antérieures à %d jours (%s)", days, cutoff)
-
-    for table in ("chat_history", "activity_logs", "feedbacks"):
-        try:
-            _execute(f"DELETE FROM {table} WHERE created_at < %s", (cutoff,))
-        except Exception as e:
-            logger.warning("cleanup_old_data: échec nettoyage %s", table, exc_info=e)
-
+def cleanup_old_data(force: bool = False) -> bool | None:
+    """All deletions + success marker commit together; None means skipped."""
+    conn = None
     try:
-        _execute("DELETE FROM sessions WHERE last_active < %s", (cutoff,))
-    except Exception as e:
-        logger.warning("cleanup_old_data: échec nettoyage sessions", exc_info=e)
-
-    try:
-        _execute("DELETE FROM admin_settings WHERE key LIKE 'ai_usage:%%' AND key < %s", ("ai_usage:" + cutoff[:10],))
+        conn = get_db()
+        with conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("SELECT pg_try_advisory_xact_lock(%s) AS acquired", (735120432,))
+                if not cur.fetchone()["acquired"]:
+                    return None
+                cur.execute("SELECT key,value FROM admin_settings WHERE key IN ('auto_cleanup_enabled','retention_days','last_cleanup')")
+                settings = {r["key"]:r["value"] for r in cur.fetchall()}
+                if not force and settings.get("auto_cleanup_enabled","true") != "true":
+                    return None
+                now = datetime.now(timezone.utc)
+                if not force and settings.get("last_cleanup"):
+                    try:
+                        last = datetime.fromisoformat(settings["last_cleanup"].replace("Z","+00:00"))
+                        if last.tzinfo is None: last = last.replace(tzinfo=timezone.utc)
+                        if now - last < timedelta(hours=6): return None
+                    except ValueError:
+                        pass
+                days = int(settings.get("retention_days","7"))
+                if not 1 <= days <= 365: raise ValueError("Invalid retention")
+                cutoff = now - timedelta(days=days)
+                for table in ("chat_history","activity_logs","feedbacks"):
+                    cur.execute(f"DELETE FROM {table} WHERE created_at < %s", (cutoff,))
+                cur.execute("DELETE FROM sessions WHERE last_active < %s", (cutoff,))
+                cur.execute("DELETE FROM admin_settings WHERE key LIKE 'ai_usage:%%' AND key < %s", ("ai_usage:"+cutoff.strftime("%Y-%m-%d"),))
+                cur.execute("INSERT INTO admin_settings (key,value) VALUES ('last_cleanup',%s) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (now.isoformat(),))
+        logger.info("Retention cleanup completed")
+        return True
     except Exception as error:
-        logger.warning("Quota history cleanup failed type=%s", type(error).__name__)
-
-    if force:
-        try:
-            _execute(
-                "INSERT INTO admin_settings (key, value) VALUES ('last_cleanup', %s) "
-                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-                (datetime.now(timezone.utc).isoformat(),),
-            )
-        except Exception as e:
-            logger.warning("cleanup_old_data: échec enregistrement last_cleanup", exc_info=e)
+        logger.error("Retention cleanup failed type=%s",type(error).__name__)
+        return False
+    finally:
+        if conn is not None: release_db(conn)
 
 
-# ---------------------------------------------------------------------------
-# Admin stats
-# ---------------------------------------------------------------------------
+@st.cache_data(ttl=300, show_spinner=False)
+def maybe_cleanup_old_data():
+    # Every page loads settings; no dependency on visiting the home page.
+    return cleanup_old_data()
+
 
 def admin_get_stats(days: int = 7) -> dict:
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    stats = {
-        "total_sessions": 0,
-        "actions_period": 0,
-        "feedbacks": 0,
-        "average_rating": 0.0,
-        "emails_collected": [],
-        "actions_by_day": {},
-        "active_users_by_day": {},
-        "actions_by_type": {},
-        "recent_actions": [],
-        "feedbacks_list": [],
-        "rating_distribution": {i: 0 for i in range(1, 6)},
-        "feature_requests": {},
-        "oldest_data": None,
-    }
-
+    since = datetime.now(timezone.utc) - timedelta(days=max(1,min(int(days),365)))
+    stats = {"total_sessions":0,"actions_period":0,"feedbacks":0,"average_rating":0.0,
+             "email_count":0,"emails_collected":[],"actions_by_day":{},"active_users_by_day":{},
+             "actions_by_type":{},"recent_actions":[],"feedbacks_list":[],
+             "rating_distribution":{i:0 for i in range(1,6)},"feature_requests":{},"oldest_data":None,"load_failed":False}
     try:
-        row = _fetchone("SELECT count(*) AS cnt FROM sessions")
-        stats["total_sessions"] = row["cnt"] if row else 0
-    except Exception as e:
-        logger.error("admin_get_stats: échec sessions count", exc_info=e)
-
-    actions = []
-    try:
-        actions = _fetchall(
-            "SELECT action_type, action_detail, created_at, session_id "
-            "FROM activity_logs WHERE created_at >= %s ORDER BY created_at DESC",
-            (since,),
-        )
-        stats["actions_period"] = len(actions)
-        stats["recent_actions"] = actions[:30]
-    except Exception as e:
-        logger.error("admin_get_stats: échec activity_logs", exc_info=e)
-
-    for a in actions:
-        created = a.get("created_at")
-        day = created.strftime("%Y-%m-%d") if created else ""
-        if day:
-            stats["actions_by_day"][day] = stats["actions_by_day"].get(day, 0) + 1
-            stats["active_users_by_day"].setdefault(day, set()).add(a.get("session_id", ""))
-            t = a.get("action_type", "unknown")
-            stats["actions_by_type"][t] = stats["actions_by_type"].get(t, 0) + 1
-
-    for d, u in stats["active_users_by_day"].items():
-        stats["active_users_by_day"][d] = len(u)
-
-    try:
-        fbs = _fetchall("SELECT * FROM feedbacks ORDER BY created_at DESC LIMIT 500")
-        stats["feedbacks"] = len(fbs)
-        stats["feedbacks_list"] = fbs
-        ratings = [f["rating"] for f in fbs if f.get("rating")]
-        if ratings:
-            stats["average_rating"] = round(sum(ratings) / len(ratings), 2)
-        for rv in ratings:
-            if 1 <= rv <= 5:
-                stats["rating_distribution"][rv] += 1
-        stats["emails_collected"] = [
-            {"email": f.get("email"), "created_at": f.get("created_at"), "rating": f.get("rating")}
-            for f in fbs if f.get("email")
-        ]
-        for f in fbs:
-            req = (f.get("feature_request") or "").strip()
-            for feat in req.split(","):
-                feat = feat.strip()
-                if feat:
-                    stats["feature_requests"][feat] = stats["feature_requests"].get(feat, 0) + 1
-    except Exception as e:
-        logger.error("admin_get_stats: échec feedbacks", exc_info=e)
-
+        row = _fetchone("SELECT COUNT(*) AS cnt FROM sessions")
+        stats["total_sessions"] = row["cnt"]
+        rows = _fetchall("SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS day, COUNT(*) AS cnt, COUNT(DISTINCT session_id) AS active FROM activity_logs WHERE created_at >= %s GROUP BY day ORDER BY day", (since,))
+        for row in rows:
+            stats["actions_by_day"][row["day"]] = row["cnt"]
+            stats["active_users_by_day"][row["day"]] = row["active"]
+        stats["actions_period"] = sum(stats["actions_by_day"].values())
+        rows = _fetchall("SELECT action_type, COUNT(*) AS cnt FROM activity_logs WHERE created_at >= %s GROUP BY action_type", (since,))
+        stats["actions_by_type"] = {r["action_type"]:r["cnt"] for r in rows}
+        stats["recent_actions"] = _fetchall("SELECT session_id,action_type,action_detail,created_at FROM activity_logs WHERE created_at >= %s ORDER BY created_at DESC,id DESC LIMIT 30", (since,))
+        row = _fetchone("SELECT COUNT(*) AS cnt, AVG(rating) FILTER (WHERE rating BETWEEN 1 AND 5) AS avg_rating, COUNT(*) FILTER (WHERE email IS NOT NULL AND email <> '') AS emails FROM feedbacks WHERE created_at >= %s", (since,))
+        stats.update(feedbacks=row["cnt"],average_rating=round(float(row["avg_rating"] or 0),2),email_count=row["emails"])
+        rows = _fetchall("SELECT rating,COUNT(*) AS cnt FROM feedbacks WHERE created_at >= %s AND rating BETWEEN 1 AND 5 GROUP BY rating", (since,))
+        stats["rating_distribution"].update({r["rating"]:r["cnt"] for r in rows})
+        stats["feedbacks_list"] = _fetchall("SELECT * FROM feedbacks WHERE created_at >= %s ORDER BY created_at DESC,id DESC LIMIT 100", (since,))
+        stats["emails_collected"] = _fetchall("SELECT email,created_at,rating FROM feedbacks WHERE created_at >= %s AND email IS NOT NULL AND email <> '' ORDER BY created_at DESC,id DESC LIMIT 100", (since,))
+        rows = _fetchall("SELECT trim(feature) AS feature,COUNT(*) AS cnt FROM feedbacks CROSS JOIN LATERAL unnest(string_to_array(feature_request,',')) AS requested(feature) WHERE created_at >= %s AND trim(feature) <> '' GROUP BY trim(feature)", (since,))
+        stats["feature_requests"] = {r["feature"]:r["cnt"] for r in rows}
+    except Exception as error:
+        logger.error("Admin statistics failed type=%s",type(error).__name__)
+        stats["load_failed"] = True
     return stats

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import random
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,7 +21,7 @@ _browser_identity = declare_component(
 
 
 def is_admin() -> bool:
-    return st.session_state.get("admin_auth", False)
+    return bool(st.session_state.get("admin_auth") and time.time() < st.session_state.get("admin_auth_until",0))
 
 
 ANIMALS = [
