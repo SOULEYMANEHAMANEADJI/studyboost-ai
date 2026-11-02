@@ -98,27 +98,36 @@ def release_db(conn):
         logger.error("Connection release failed type=%s", type(error).__name__)
 
 
+def _read_query(query: str, params: tuple | None = None, many: bool = False):
+    # Retry reads only. Never automatically replay a write with uncertain commit.
+    if not query.lstrip().upper().startswith("SELECT "):
+        raise ValueError("Read helper only accepts SELECT queries")
+    for attempt in range(2):
+        conn = None
+        try:
+            conn = get_db()
+            with conn:
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(query, params)
+                    if many:
+                        return [dict(row) for row in cur.fetchall()]
+                    row = cur.fetchone()
+                    return dict(row) if row else None
+        except (psycopg2.OperationalError, psycopg2.InterfaceError):
+            if attempt:
+                raise
+            logger.warning("Database read connection lost; retrying once")
+        finally:
+            if conn is not None:
+                release_db(conn)
+
+
 def _fetchone(query: str, params: tuple | None = None) -> dict | None:
-    conn = get_db()
-    try:
-        with conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(query, params)
-                row = cur.fetchone()
-                return dict(row) if row else None
-    finally:
-        release_db(conn)
+    return _read_query(query, params)
 
 
 def _fetchall(query: str, params: tuple | None = None) -> list[dict]:
-    conn = get_db()
-    try:
-        with conn:
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                cur.execute(query, params)
-                return [dict(r) for r in cur.fetchall()]
-    finally:
-        release_db(conn)
+    return _read_query(query, params, many=True)
 
 
 def _execute(query: str, params: tuple | None = None) -> int:

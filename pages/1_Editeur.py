@@ -236,7 +236,7 @@ with col_dl2:
                 data=editor_text.encode("utf-8"),
                 file_name=f"{doc_title}.md",
                 mime="text/markdown",
-                use_container_width=True, type="primary",
+                width="stretch", type="primary",
             )
         else:
             st.warning("⚠️ Export Markdown temporairement désactivé")
@@ -255,7 +255,7 @@ with col_dl2:
             data=st.session_state["_docx_bytes"],
             file_name=f"{doc_title}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            use_container_width=True, type="primary",
+            width="stretch", type="primary",
             on_click=lambda: log_activity(user_id, "docx_export", doc_title),
         )
 
@@ -293,7 +293,7 @@ with col_dl2:
                 st.download_button(
                     "⬇️ Télécharger", data=st.session_state["_pdf_bytes"],
                     file_name=f"{doc_title}.pdf", mime="application/pdf",
-                    use_container_width=True, type="primary",
+                    width="stretch", type="primary",
                 )
 
 st.subheader("Transformer mon texte")

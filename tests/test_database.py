@@ -41,6 +41,30 @@ class DatabaseTests(unittest.TestCase):
             self.assertIn("WHERE",query)
             self.assertEqual(len(params), 1)
 
+    def test_read_reconnects_if_connection_closes_after_pool_check(self):
+        class Offline(Exception): pass
+        class Conn:
+            def __init__(self, fail): self.fail=fail
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def cursor(self, **kwargs): return self
+            def execute(self, query, params):
+                if self.fail: raise Offline("closed during read")
+            def fetchone(self): return {"cnt":5}
+            def fetchall(self): return [{"cnt":5}]
+        old,fresh=Conn(True),Conn(False)
+        available=[old,fresh];released=[]
+        env={"get_db":lambda:available.pop(0),"release_db":released.append,
+             "psycopg2":types.SimpleNamespace(OperationalError=Offline,InterfaceError=Offline,extras=types.SimpleNamespace(RealDictCursor=object)),
+             "logger":logging.getLogger("read-test")}
+        functions(["_read_query","_fetchone","_fetchall"],env)
+        self.assertEqual(env["_fetchall"]("SELECT count(*) AS cnt FROM sessions"),[{"cnt":5}])
+        self.assertEqual(released,[old,fresh])
+        available[:]=[Conn(True),Conn(True)];released.clear()
+        with self.assertRaises(Offline):env["_fetchone"]("SELECT 1")
+        self.assertEqual(len(released),2)
+        with self.assertRaises(ValueError):env["_read_query"]("UPDATE sessions SET chat_count=1")
+
     def test_health_is_read_only_and_releases_connection(self):
         queries, returned = [], []
         class Conn:

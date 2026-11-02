@@ -64,7 +64,7 @@ def main():
     st.caption(f"Activités et avis des {period} derniers jours · listes limitées aux 100 derniers résultats · horaires UTC")
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Déconnexion", use_container_width=True):
+    if st.sidebar.button("🚪 Déconnexion", width="stretch"):
         st.session_state["admin_auth"] = False
         st.rerun()
 
@@ -83,28 +83,28 @@ def main():
         st.markdown("---")
         if stats["active_users_by_day"]:
             df = pd.DataFrame(list(stats["active_users_by_day"].items()), columns=["Date", "Actifs"]).sort_values("Date")
-            st.plotly_chart(px.line(df, x="Date", y="Actifs", markers=True, color_discrete_sequence=["#4F46E5"]), use_container_width=True)
+            st.plotly_chart(px.line(df, x="Date", y="Actifs", markers=True, color_discrete_sequence=["#4F46E5"]), width="stretch")
         if stats["actions_by_day"]:
             df2 = pd.DataFrame(list(stats["actions_by_day"].items()), columns=["Date", "Actions"]).sort_values("Date")
-            st.plotly_chart(px.bar(df2, x="Date", y="Actions", color_discrete_sequence=["#7C3AED"]), use_container_width=True)
+            st.plotly_chart(px.bar(df2, x="Date", y="Actions", color_discrete_sequence=["#7C3AED"]), width="stretch")
 
     with tab2:
         col_l, col_r = st.columns(2)
         with col_l:
             if stats["actions_by_type"]:
                 df = pd.DataFrame(list(stats["actions_by_type"].items()), columns=["Type", "Nombre"]).sort_values("Nombre", ascending=False)
-                st.plotly_chart(px.pie(df, names="Type", values="Nombre"), use_container_width=True)
+                st.plotly_chart(px.pie(df, names="Type", values="Nombre"), width="stretch")
         with col_r:
             if stats["actions_by_type"]:
                 df = pd.DataFrame(list(stats["actions_by_type"].items()), columns=["Type", "Nombre"]).sort_values("Nombre", ascending=True)
-                st.plotly_chart(px.bar(df, y="Type", x="Nombre", orientation="h", color_discrete_sequence=["#EC4899"]), use_container_width=True)
+                st.plotly_chart(px.bar(df, y="Type", x="Nombre", orientation="h", color_discrete_sequence=["#EC4899"]), width="stretch")
         st.markdown("---")
         st.markdown("### 📋 30 dernières actions")
         if stats["recent_actions"]:
             df = pd.DataFrame(stats["recent_actions"])
             df["session"] = df["session_id"].apply(lambda x: str(x)[:8] + "…")
             df["date"] = df["created_at"].apply(lambda x: str(x)[:19])
-            st.dataframe(df[["session", "action_type", "action_detail", "date"]], use_container_width=True, hide_index=True)
+            st.dataframe(df[["session", "action_type", "action_detail", "date"]], width="stretch", hide_index=True)
 
     with tab3:
         ca, cb = st.columns(2)
@@ -116,16 +116,16 @@ def main():
         with cb:
             if stats["rating_distribution"]:
                 df = pd.DataFrame(list(stats["rating_distribution"].items()), columns=["Note", "Nombre"])
-                st.plotly_chart(px.bar(df, x="Note", y="Nombre", color_discrete_sequence=["#4F46E5"]), use_container_width=True)
+                st.plotly_chart(px.bar(df, x="Note", y="Nombre", color_discrete_sequence=["#4F46E5"]), width="stretch")
         st.markdown("---")
         if stats["feature_requests"]:
             df = pd.DataFrame(list(stats["feature_requests"].items()), columns=["Fonctionnalité", "Demandes"]).sort_values("Demandes", ascending=True)
-            st.plotly_chart(px.bar(df, y="Fonctionnalité", x="Demandes", orientation="h", color_discrete_sequence=["#7C3AED"]), use_container_width=True)
+            st.plotly_chart(px.bar(df, y="Fonctionnalité", x="Demandes", orientation="h", color_discrete_sequence=["#7C3AED"]), width="stretch")
         if stats["emails_collected"]:
             st.markdown("### 📧 Emails")
             df = pd.DataFrame(stats["emails_collected"])
             df["date"] = df["created_at"].apply(lambda x: str(x)[:10])
-            st.dataframe(df[["email", "rating", "date"]], use_container_width=True, hide_index=True)
+            st.dataframe(df[["email", "rating", "date"]], width="stretch", hide_index=True)
         st.markdown("---")
         st.markdown("### 💬 Feedbacks")
         for fb in stats.get("feedbacks_list", []):
@@ -162,7 +162,7 @@ def main():
         with c2: chat_q = st.number_input("Messages/jour", 0, 100, int(settings.get("quota_chat_per_day", "20")), key="q_chat")
         with c3: search_q = st.number_input("Recherches/jour", 0, 100, int(settings.get("quota_search_per_day", "10")), key="q_search")
         with c4: ai_q = st.number_input("IA/jour", 0, 100, int(settings.get("quota_ai_per_day", "15")), key="q_ai")
-        if st.button("💾 Sauvegarder", use_container_width=True, type="primary"):
+        if st.button("💾 Sauvegarder", width="stretch", type="primary"):
             update_setting("quota_pdf_per_day", pdf_q)
             update_setting("quota_chat_per_day", chat_q)
             update_setting("quota_search_per_day", search_q)
@@ -188,11 +188,11 @@ def main():
         new_msg = st.text_area("Message affiché sur l'accueil", value=msg, height=80)
         col_p, col_c = st.columns(2)
         with col_p:
-            if st.button("📢 Publier", use_container_width=True, type="primary"):
+            if st.button("📢 Publier", width="stretch", type="primary"):
                 update_setting("global_message", new_msg)
                 st.success("Publié !")
         with col_c:
-            if st.button("🗑️ Effacer", use_container_width=True):
+            if st.button("🗑️ Effacer", width="stretch"):
                 update_setting("global_message", "")
                 st.success("Effacé.")
 
@@ -211,7 +211,7 @@ def main():
 
         st.markdown("---")
         st.markdown("### 🧹 Nettoyage")
-        if st.button("🧹 Nettoyer maintenant", use_container_width=True, type="primary"):
+        if st.button("🧹 Nettoyer maintenant", width="stretch", type="primary"):
             with st.spinner("Nettoyage…"):
                 result = cleanup_old_data(force=True)
                 if result is True:

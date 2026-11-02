@@ -60,14 +60,14 @@ def main():
             st.warning("⚠️ Cette action supprime ton historique de la session.")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("✅ Oui, nouvelle identité", use_container_width=True, type="primary"):
+                if st.button("✅ Oui, nouvelle identité", width="stretch", type="primary"):
                     st.session_state["confirm_new_id"] = False
                     logout()
             with c2:
-                if st.button("❌ Annuler", use_container_width=True):
+                if st.button("❌ Annuler", width="stretch"):
                     st.session_state["confirm_new_id"] = False
                     st.rerun()
-        elif st.button("🔄 Nouvelle identité", use_container_width=True):
+        elif st.button("🔄 Nouvelle identité", width="stretch"):
             st.session_state["confirm_new_id"] = True
             st.rerun()
 
@@ -126,7 +126,7 @@ def main():
             '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
-        if st.button("📝 Ouvrir l'éditeur", use_container_width=True, type="primary"):
+        if st.button("📝 Ouvrir l'éditeur", width="stretch", type="primary"):
             st.switch_page("pages/1_Editeur.py")
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -144,7 +144,7 @@ def main():
             '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
-        if st.button("💬 Ouvrir le chat", use_container_width=True, type="primary"):
+        if st.button("💬 Ouvrir le chat", width="stretch", type="primary"):
             st.switch_page("pages/2_Chat.py")
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
@@ -165,7 +165,7 @@ def main():
             '<div style="margin-top:1.5rem;margin-bottom:0.75rem;">',
             unsafe_allow_html=True,
         )
-        if st.button("💡 Donner mon avis", use_container_width=True, type="primary"):
+        if st.button("💡 Donner mon avis", width="stretch", type="primary"):
             st.switch_page("pages/3_Feedback.py")
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)

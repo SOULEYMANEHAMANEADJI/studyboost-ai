@@ -84,7 +84,7 @@ def main():
 
         submitted = st.form_submit_button(
             "💌 Envoyer mon avis", disabled=already_sent,
-            use_container_width=True, type="primary",
+            width="stretch", type="primary",
         )
 
         if submitted and not already_sent:

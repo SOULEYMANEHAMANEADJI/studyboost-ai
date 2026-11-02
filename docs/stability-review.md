@@ -1,4 +1,4 @@
-# Lot de stabilité — version 16-review
+# Lot de stabilité — version 16.1-review
 
 Branche : `codex/stability-review`. Ce lot est destiné à une application de prévisualisation ; `main` reste en version 15.
 
@@ -16,7 +16,7 @@ Branche : `codex/stability-review`. Ce lot est destiné à une application de pr
 
 ## Vérification réalisée
 
-45 tests Python, dont six parcours exécutés avec de vrais widgets Streamlit ; tests JavaScript de l'identité navigateur. Les exports PDF et Word sont générés et relus en mémoire avec leurs bibliothèques réelles. La base et l'IA des parcours Streamlit sont simulées. Les réservations concurrentes sont testées avec un double transactionnel, pas avec un serveur PostgreSQL réel.
+46 tests Python, dont six parcours exécutés avec de vrais widgets Streamlit ; tests JavaScript de l'identité navigateur. Les exports PDF et Word sont générés et relus en mémoire avec leurs bibliothèques réelles. La base et l'IA des parcours Streamlit sont simulées. Les réservations concurrentes sont testées avec un double transactionnel, pas avec un serveur PostgreSQL réel.
 
 ## Avant fusion et déploiement
 
@@ -41,3 +41,9 @@ Branche : `codex/stability-review`. Ce lot est destiné à une application de pr
 La base et l'IA des tests restent simulées. Aucune modification n'a été exécutée sur la base Cloud. La connexion réelle, les verrous PostgreSQL en concurrence et l'apparence sur plusieurs appareils doivent être validés sur une application de test. L'outil de navigateur local n'a pas pu s'initialiser ; les parcours de widgets sont vérifiés avec Streamlit AppTest, pas avec des captures de navigateur.
 
 Une identité anonyme par navigateur n'empêche pas la création répétée d'espaces ; les plafonds globaux bornent les appels, mais ne constituent pas une protection complète contre le déni de service. Le rôle de base de données de l'application doit rester confidentiel et les anciennes clés publiées doivent être révoquées.
+
+## Compatibilité console Streamlit Cloud
+
+Le verrouillage inclut explicitement PyArrow 24.0.0, en accord avec la version que Streamlit Cloud installe à la place de PyArrow 26. Les paramètres dépréciés `use_container_width` sont remplacés par `width` dans les pages. L'import PDF utilise déjà `pymupdf`.
+
+Le pool contrôle une connexion avant usage ; les lectures peuvent également être rejouées une seule fois si une coupure intervient après ce contrôle. Les écritures ne sont pas rejouées automatiquement afin d'éviter un doublon lorsque leur validation est incertaine. Le test réel après mise en veille de Neon reste à effectuer. Les journaux fournis provenaient de `main` ; ces changements sont sur la branche de revue et ne sont pas actifs sur `main` tant qu'ils n'y sont pas fusionnés.
